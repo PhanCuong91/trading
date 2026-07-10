@@ -38,7 +38,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - _Requirements: FR1.1, FR1.2, FR1.3_
 
 - [ ] 2. Implement trading strategies
-  - [ ] 2.1 Implement strategy base protocol
+  - [x] 2.1 Implement strategy base protocol
     - Create `src/forex_signals/strategies/base.py` with `Strategy` Protocol
     - Define `name`, `generate_signal(candles)`, and `min_candles` interface
     - _Requirements: FR2, NFR (extensibility)_
