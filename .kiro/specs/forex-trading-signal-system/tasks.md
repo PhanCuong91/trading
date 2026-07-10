@@ -115,11 +115,11 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Test with all 5 agreeing → signal matches
     - _Requirements: FR3, FR6.2_
 
-- [ ] 4. Checkpoint - Ensure strategies and consensus tests pass
+- [x] 4. Checkpoint - Ensure strategies and consensus tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. Implement order management
-  - [ ] 5.1 Implement Order models and OrderManager
+- [x] 5. Implement order management
+  - [x] 5.1 Implement Order models and OrderManager
     - Create `src/forex_signals/orders/models.py` (if separate from data models)
     - Create `src/forex_signals/orders/manager.py` with `OrderManager` class
     - `create_order`: calculate SL/TP prices from pips and pip_value (0.0001)
