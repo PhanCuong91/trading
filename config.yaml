@@ -1,0 +1,29 @@
+# config.yaml
+pair: "EURUSD=X"
+timeframe: "M5"
+sl_pips: 20
+tp_pips: 40
+consensus_threshold: 4
+
+strategies:
+  smi:
+    period: 14
+    smooth_period: 3
+  moving_average:
+    fast_period: 10
+    slow_period: 50
+  rsi:
+    period: 14
+    overbought: 70
+    oversold: 30
+  macd:
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+  bollinger:
+    period: 20
+    std_dev: 2.0
+
+backtest:
+  start_date: "2024-01-01"
+  end_date: "2024-12-31"

@@ -1,0 +1,16 @@
+pyproject.toml
+setup.cfg
+setup.py
+src/forex_signals/__init__.py
+src/forex_signals.egg-info/PKG-INFO
+src/forex_signals.egg-info/SOURCES.txt
+src/forex_signals.egg-info/dependency_links.txt
+src/forex_signals.egg-info/entry_points.txt
+src/forex_signals.egg-info/requires.txt
+src/forex_signals.egg-info/top_level.txt
+src/forex_signals/backtest/__init__.py
+src/forex_signals/broker/__init__.py
+src/forex_signals/consensus/__init__.py
+src/forex_signals/data/__init__.py
+src/forex_signals/orders/__init__.py
+src/forex_signals/strategies/__init__.py
