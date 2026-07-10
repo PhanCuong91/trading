@@ -91,8 +91,8 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Test edge cases (flat prices, extreme values)
     - _Requirements: FR2, FR6.1_
 
-- [ ] 3. Implement consensus engine
-  - [ ] 3.1 Implement consensus engine logic
+- [x] 3. Implement consensus engine
+  - [x] 3.1 Implement consensus engine logic
     - Create `src/forex_signals/consensus/engine.py` with `ConsensusEngine` class
     - Configurable threshold (default 4)
     - Count BUY and SELL signals; return direction if count >= threshold, else NEUTRAL
