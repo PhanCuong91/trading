@@ -227,6 +227,30 @@
         "chatSessionId": "sess_a9a907ac-43cb-43d8-ade2-57a0e0c14cf6",
         "timestamp": 1783683131683
       }
+    ],
+    "8.2 Implement CLI entry point": [
+      {
+        "executionId": "a45a0adc-cf67-4194-8837-a720d51e5c4e",
+        "chatSessionId": "sess_d3bb59ec-f8f2-4f7d-b71d-f5f72ba593cb",
+        "timestamp": 1783683327034
+      },
+      {
+        "executionId": "a45a0adc-cf67-4194-8837-a720d51e5c4e",
+        "chatSessionId": "sess_d3bb59ec-f8f2-4f7d-b71d-f5f72ba593cb",
+        "timestamp": 1783683560929
+      }
+    ],
+    "8.3 Wire all components together in backtest command": [
+      {
+        "executionId": "22bce627-2c26-4679-ac6a-ac7248711b0e",
+        "chatSessionId": "sess_9db3ce13-a7fc-4388-a788-201895a27df1",
+        "timestamp": 1783683628690
+      },
+      {
+        "executionId": "22bce627-2c26-4679-ac6a-ac7248711b0e",
+        "chatSessionId": "sess_9db3ce13-a7fc-4388-a788-201895a27df1",
+        "timestamp": 1783683725127
+      }
     ]
   }
 }

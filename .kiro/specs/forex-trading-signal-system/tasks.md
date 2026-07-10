@@ -200,7 +200,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - No concrete implementation needed (future phase)
     - _Requirements: NFR (MT5 integration architecture)_
 
-  - [ ] 8.2 Implement CLI entry point
+  - [x] 8.2 Implement CLI entry point
     - Create `src/forex_signals/cli.py` using click
     - `backtest` command: load config, download data, run backtest, display results
     - CLI options for pair, timeframe, sl-pips, tp-pips, start-date, end-date
@@ -208,7 +208,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Register as console_scripts entry point in pyproject.toml
     - _Requirements: NFR (configurable, CLI)_
 
-  - [ ] 8.3 Wire all components together in backtest command
+  - [x] 8.3 Wire all components together in backtest command
     - Instantiate all 5 strategies with config parameters
     - Create ConsensusEngine, OrderManager, BacktestEngine
     - Download data → run backtest → display results
