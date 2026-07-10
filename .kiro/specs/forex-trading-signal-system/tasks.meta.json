@@ -184,6 +184,49 @@
         "chatSessionId": "sess_4ed6f5d7-e2cf-4abe-96ff-a8657bb8ee22",
         "timestamp": 1783682336791
       }
+    ],
+    "6.1 Implement metrics calculator": [
+      {
+        "executionId": "9e4261d5-47c3-4dcd-8be7-7a92b8bca54c",
+        "chatSessionId": "sess_93d1d299-9325-43d4-b5bf-eaacffa9b6db",
+        "timestamp": 1783682596551
+      },
+      {
+        "executionId": "9e4261d5-47c3-4dcd-8be7-7a92b8bca54c",
+        "chatSessionId": "sess_93d1d299-9325-43d4-b5bf-eaacffa9b6db",
+        "timestamp": 1783682761507
+      }
+    ],
+    "6.7 Implement backtest engine orchestrator": [
+      {
+        "executionId": "401fb118-373f-4c1d-bc7b-fed3e9d84fe3",
+        "chatSessionId": "sess_be6f8813-e9e6-4e77-bdf1-dd8917ed838b",
+        "timestamp": 1783682780118
+      },
+      {
+        "executionId": "401fb118-373f-4c1d-bc7b-fed3e9d84fe3",
+        "chatSessionId": "sess_be6f8813-e9e6-4e77-bdf1-dd8917ed838b",
+        "timestamp": 1783682936397
+      }
+    ],
+    "6. Implement backtest engine and metrics": [
+      {
+        "executionId": "401fb118-373f-4c1d-bc7b-fed3e9d84fe3",
+        "chatSessionId": "sess_be6f8813-e9e6-4e77-bdf1-dd8917ed838b",
+        "timestamp": 1783682936598
+      }
+    ],
+    "7. Checkpoint - Ensure all core logic tests pass": [
+      {
+        "executionId": "6e592f9f-6ec3-4c46-bbfe-8aed1166f56b",
+        "chatSessionId": "sess_a9a907ac-43cb-43d8-ade2-57a0e0c14cf6",
+        "timestamp": 1783683089277
+      },
+      {
+        "executionId": "6e592f9f-6ec3-4c46-bbfe-8aed1166f56b",
+        "chatSessionId": "sess_a9a907ac-43cb-43d8-ade2-57a0e0c14cf6",
+        "timestamp": 1783683131683
+      }
     ]
   }
 }

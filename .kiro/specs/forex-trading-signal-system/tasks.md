@@ -146,8 +146,8 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Test order remains open when candle doesn't hit SL/TP
     - _Requirements: FR4, FR6_
 
-- [ ] 6. Implement backtest engine and metrics
-  - [ ] 6.1 Implement metrics calculator
+- [x] 6. Implement backtest engine and metrics
+  - [x] 6.1 Implement metrics calculator
     - Create `src/forex_signals/backtest/metrics.py` with `MetricsCalculator` class
     - Implement: `win_rate`, `total_pnl`, `max_drawdown`, `sharpe_ratio`, `profit_factor`, `avg_trade_duration`
     - Handle edge cases: empty trades, zero std dev, no losing trades
@@ -178,7 +178,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - For 2+ trades with non-zero std: sharpe = (mean - rfr) / std; otherwise 0.0
     - **Validates: Requirements FR5.5**
 
-  - [ ] 6.7 Implement backtest engine orchestrator
+  - [x] 6.7 Implement backtest engine orchestrator
     - Create `src/forex_signals/backtest/engine.py` with `BacktestEngine` class
     - Process candles sequentially: generate signals → consensus → create order if signal and no open position → update open orders
     - After all candles, compute and return `BacktestResult`
@@ -190,7 +190,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Test no-trade scenario (never reaches consensus)
     - _Requirements: FR5, FR6.3_
 
-- [ ] 7. Checkpoint - Ensure all core logic tests pass
+- [x] 7. Checkpoint - Ensure all core logic tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 8. Implement broker protocol and CLI
