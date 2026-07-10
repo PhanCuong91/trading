@@ -12,6 +12,18 @@
         "chatSessionId": "sess_1caf57cb-64b3-49eb-9b65-a7ff37acbe30",
         "timestamp": 1783673748212
       }
+    ],
+    "1.2 Implement data models and enums": [
+      {
+        "executionId": "217286f5-546f-4b3b-8ccf-e7d073067e2f",
+        "chatSessionId": "sess_e3524df5-4859-4676-97f5-8fd2c406b203",
+        "timestamp": 1783674057836
+      },
+      {
+        "executionId": "217286f5-546f-4b3b-8ccf-e7d073067e2f",
+        "chatSessionId": "sess_e3524df5-4859-4676-97f5-8fd2c406b203",
+        "timestamp": 1783674449458
+      }
     ]
   }
 }

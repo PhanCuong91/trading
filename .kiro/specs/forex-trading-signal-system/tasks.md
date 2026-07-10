@@ -15,7 +15,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Create default `config.yaml` with all strategy parameters
     - _Requirements: NFR (modular package structure, configurable)_
 
-  - [ ] 1.2 Implement data models and enums
+  - [x] 1.2 Implement data models and enums
     - Create `src/forex_signals/data/models.py` with `Timeframe`, `Signal`, `OrderStatus` enums
     - Create `Candle`, `StrategySignal` frozen dataclasses
     - Create `Order` dataclass with lifecycle fields
