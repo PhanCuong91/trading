@@ -6,7 +6,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
 
 ## Tasks
 
-- [ ] 1. Set up project structure, data models, and configuration
+- [x] 1. Set up project structure, data models, and configuration
   - [x] 1.1 Create project skeleton with pyproject.toml and package structure
     - Create `pyproject.toml` with dependencies (yfinance, pandas, numpy, pyyaml, click)
     - Create `src/forex_signals/__init__.py` and all subpackage `__init__.py` files
@@ -29,7 +29,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Support CLI overrides for pair, timeframe, SL/TP pips
     - _Requirements: NFR (configurable), FR1.3_
 
-  - [ ] 1.4 Implement Yahoo Finance data downloader
+  - [x] 1.4 Implement Yahoo Finance data downloader
     - Create `src/forex_signals/data/downloader.py` with `YahooDataDownloader` class
     - Download OHLC data using yfinance, convert to `List[Candle]`
     - Implement retry with exponential backoff (3 attempts)
