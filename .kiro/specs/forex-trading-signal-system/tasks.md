@@ -37,7 +37,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Detect and log data gaps
     - _Requirements: FR1.1, FR1.2, FR1.3_
 
-- [ ] 2. Implement trading strategies
+- [x] 2. Implement trading strategies
   - [x] 2.1 Implement strategy base protocol
     - Create `src/forex_signals/strategies/base.py` with `Strategy` Protocol
     - Define `name`, `generate_signal(candles)`, and `min_candles` interface
@@ -58,21 +58,21 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Return NEUTRAL if insufficient candles
     - _Requirements: FR2.2_
 
-  - [ ] 2.4 Implement RSI strategy
+  - [x] 2.4 Implement RSI strategy
     - Create `src/forex_signals/strategies/rsi.py`
     - Standard 14-period RSI calculation
     - BUY when RSI crosses above oversold (30), SELL when crosses below overbought (70)
     - Return NEUTRAL if insufficient candles
     - _Requirements: FR2.3_
 
-  - [ ] 2.5 Implement MACD strategy
+  - [x] 2.5 Implement MACD strategy
     - Create `src/forex_signals/strategies/macd.py`
     - Standard MACD (12, 26, 9) calculation
     - BUY on MACD crossing above signal, SELL on crossing below
     - Return NEUTRAL if insufficient candles
     - _Requirements: FR2.4_
 
-  - [ ] 2.6 Implement Bollinger Bands strategy
+  - [x] 2.6 Implement Bollinger Bands strategy
     - Create `src/forex_signals/strategies/bollinger.py`
     - 20-period SMA with configurable std_dev bands
     - BUY on price touching/crossing below lower band and reversing
