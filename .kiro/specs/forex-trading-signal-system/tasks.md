@@ -22,7 +22,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Create `BacktestConfig` and `BacktestResult` dataclasses
     - _Requirements: FR1, FR4, FR5_
 
-  - [ ] 1.3 Implement configuration loading and validation
+  - [x] 1.3 Implement configuration loading and validation
     - Create `src/forex_signals/config.py` with YAML loading
     - Validate all configuration values (positive pips, valid timeframe, valid dates)
     - Raise `ConfigError` with descriptive messages on invalid config
