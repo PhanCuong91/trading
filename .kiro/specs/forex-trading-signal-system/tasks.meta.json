@@ -79,6 +79,18 @@
         "chatSessionId": "sess_91b893a7-68a6-446c-b5c4-cfafec02e4b1",
         "timestamp": 1783680188844
       }
+    ],
+    "2.3 Implement Moving Average crossover strategy": [
+      {
+        "executionId": "ee8d3224-7453-4c26-b347-132185028c82",
+        "chatSessionId": "sess_8bc35541-f1e4-49ee-9251-827b866fb933",
+        "timestamp": 1783680232754
+      },
+      {
+        "executionId": "ee8d3224-7453-4c26-b347-132185028c82",
+        "chatSessionId": "sess_8bc35541-f1e4-49ee-9251-827b866fb933",
+        "timestamp": 1783680553284
+      }
     ]
   }
 }

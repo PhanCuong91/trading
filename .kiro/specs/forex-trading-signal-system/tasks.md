@@ -51,7 +51,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Return NEUTRAL if insufficient candles
     - _Requirements: FR2.1_
 
-  - [ ] 2.3 Implement Moving Average crossover strategy
+  - [x] 2.3 Implement Moving Average crossover strategy
     - Create `src/forex_signals/strategies/moving_average.py`
     - Configurable fast_period (default 10) and slow_period (default 50)
     - BUY on golden cross, SELL on death cross, NEUTRAL otherwise
