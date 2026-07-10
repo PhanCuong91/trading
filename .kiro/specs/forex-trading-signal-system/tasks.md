@@ -43,7 +43,7 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Define `name`, `generate_signal(candles)`, and `min_candles` interface
     - _Requirements: FR2, NFR (extensibility)_
 
-  - [ ] 2.2 Implement SMI strategy
+  - [x] 2.2 Implement SMI strategy
     - Create `src/forex_signals/strategies/smi.py`
     - Calculate distance from close to midpoint of high-low range
     - Double EMA smoothing with configurable period and smooth_period
