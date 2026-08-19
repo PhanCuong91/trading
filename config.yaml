@@ -3,7 +3,7 @@ pair: "EURUSD=X"
 timeframe: "M5"
 sl_pips: 20
 tp_pips: 40
-consensus_threshold: 4
+consensus_threshold: 3
 
 strategies:
   smi:
@@ -25,5 +25,37 @@ strategies:
     std_dev: 2.0
 
 backtest:
-  start_date: "2024-01-01"
-  end_date: "2024-12-31"
+  # Yahoo Finance only serves 5m/15m intraday data for the last ~60 days,
+  # so keep this range within 60 days when timeframe is M5/M15 (see README).
+  start_date: "2026-06-01"
+  end_date: "2026-07-29"
+
+# Optional: persist downloaded candles to CSV for reuse/offline analysis.
+# Disabled by default; override with --save-csv/--csv-dir on the CLI.
+csv_export:
+  enabled: true
+  output_dir: "data"
+
+# Optional: automatically search for better consensus thresholds and strategy parameters.
+auto_tune:
+  enabled: false
+  train_split: 0.7
+  consensus_threshold_values: [2, 3, 4, 5]
+  strategy_param_values:
+    smi:
+      period: [7, 14]
+      smooth_period: [2, 3]
+    moving_average:
+      fast_period: [5, 10]
+      slow_period: [20, 50]
+    rsi:
+      period: [7, 14]
+      overbought: [60, 70]
+      oversold: [20, 30]
+    macd:
+      fast_period: [8, 12]
+      slow_period: [20, 26]
+      signal_period: [7, 9]
+    bollinger:
+      period: [10, 20]
+      std_dev: [1.5, 2.0]

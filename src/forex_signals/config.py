@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -32,6 +32,24 @@ class BacktestDateConfig:
 
 
 @dataclass(frozen=True)
+class CsvExportConfig:
+    """Configuration for optional CSV export of downloaded candle data."""
+
+    enabled: bool
+    output_dir: str
+
+
+@dataclass(frozen=True)
+class AutoTuneConfig:
+    """Configuration for optional auto-tuning of backtesting parameters."""
+
+    enabled: bool = False
+    train_split: float = 0.7
+    consensus_threshold_values: List[int] = field(default_factory=lambda: [2, 3, 4, 5])
+    strategy_param_values: Dict[str, Dict[str, List[Any]]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Complete application configuration."""
 
@@ -42,6 +60,10 @@ class AppConfig:
     consensus_threshold: int
     strategies: Dict[str, StrategyConfig]
     backtest: BacktestDateConfig
+    csv_export: CsvExportConfig = field(
+        default_factory=lambda: CsvExportConfig(enabled=False, output_dir="data")
+    )
+    auto_tune: AutoTuneConfig = field(default_factory=AutoTuneConfig)
 
 
 # Mapping from config file timeframe string (enum name) to Timeframe enum
@@ -94,12 +116,79 @@ def _validate_consensus_threshold(value: Any) -> int:
     return threshold
 
 
+def _validate_csv_export(value: Any) -> CsvExportConfig:
+    """Validate the csv_export configuration section."""
+    if not isinstance(value, dict):
+        raise ConfigError("csv_export must be a mapping with 'enabled' and 'output_dir'")
+
+    enabled = value.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"csv_export.enabled must be a boolean, got: {enabled!r}")
+
+    output_dir = value.get("output_dir", "data")
+    if not isinstance(output_dir, str) or not output_dir.strip():
+        raise ConfigError("csv_export.output_dir must be a non-empty string")
+
+    return CsvExportConfig(enabled=enabled, output_dir=output_dir)
+
+
+def _validate_auto_tune(value: Any) -> AutoTuneConfig:
+    """Validate the auto_tune configuration section."""
+    if not isinstance(value, dict):
+        raise ConfigError("auto_tune must be a mapping with 'enabled' and optional tuning settings")
+
+    enabled = value.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"auto_tune.enabled must be a boolean, got: {enabled!r}")
+
+    train_split = value.get("train_split", 0.7)
+    try:
+        train_split_value = float(train_split)
+    except (TypeError, ValueError):
+        raise ConfigError(f"auto_tune.train_split must be a number, got: {train_split!r}")
+    if not 0 < train_split_value < 1:
+        raise ConfigError(
+            f"auto_tune.train_split must be between 0 and 1, got: {train_split_value}"
+        )
+
+    threshold_values = value.get("consensus_threshold_values", [2, 3, 4, 5])
+    if not isinstance(threshold_values, list) or not threshold_values:
+        raise ConfigError("auto_tune.consensus_threshold_values must be a non-empty list")
+    validated_thresholds: List[int] = []
+    for item in threshold_values:
+        try:
+            threshold = int(item)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                f"auto_tune.consensus_threshold_values must contain integers, got: {item!r}"
+            )
+        if threshold < 1:
+            raise ConfigError(
+                f"auto_tune.consensus_threshold_values must be positive, got: {threshold}"
+            )
+        validated_thresholds.append(threshold)
+
+    strategy_param_values = value.get("strategy_param_values", {})
+    if not isinstance(strategy_param_values, dict):
+        raise ConfigError("auto_tune.strategy_param_values must be a mapping")
+
+    return AutoTuneConfig(
+        enabled=enabled,
+        train_split=train_split_value,
+        consensus_threshold_values=validated_thresholds,
+        strategy_param_values=strategy_param_values,
+    )
+
+
 def load_config(
     config_path: Optional[str] = None,
     pair: Optional[str] = None,
     timeframe: Optional[str] = None,
     sl_pips: Optional[float] = None,
     tp_pips: Optional[float] = None,
+    csv_export_enabled: Optional[bool] = None,
+    csv_export_dir: Optional[str] = None,
+    auto_tune_enabled: Optional[bool] = None,
 ) -> AppConfig:
     """Load and validate configuration from a YAML file with optional CLI overrides.
 
@@ -110,6 +199,11 @@ def load_config(
         timeframe: CLI override for the timeframe (enum name, e.g. 'M5').
         sl_pips: CLI override for stop-loss pips.
         tp_pips: CLI override for take-profit pips.
+        csv_export_enabled: CLI override for whether CSV export is enabled.
+        csv_export_dir: CLI override for the CSV export output directory.
+                        Providing this implies csv export is enabled unless
+                        csv_export_enabled explicitly disables it.
+        auto_tune_enabled: CLI override for whether auto-tuning is enabled.
 
     Returns:
         Validated AppConfig instance.
@@ -192,6 +286,30 @@ def load_config(
 
     validated_backtest = BacktestDateConfig(start_date=start_date, end_date=end_date)
 
+    # Validate csv_export section, applying CLI overrides
+    csv_export_section = raw.get("csv_export", {})
+    if not isinstance(csv_export_section, dict):
+        raise ConfigError("csv_export must be a mapping with 'enabled' and 'output_dir'")
+
+    csv_export_raw = dict(csv_export_section)
+    if csv_export_dir is not None:
+        csv_export_raw["output_dir"] = csv_export_dir
+        csv_export_raw["enabled"] = True
+    if csv_export_enabled is not None:
+        csv_export_raw["enabled"] = csv_export_enabled
+
+    validated_csv_export = _validate_csv_export(csv_export_raw)
+
+    auto_tune_section = raw.get("auto_tune", {})
+    if not isinstance(auto_tune_section, dict):
+        raise ConfigError("auto_tune must be a mapping with 'enabled' and optional tuning settings")
+
+    auto_tune_raw = dict(auto_tune_section)
+    if auto_tune_enabled is not None:
+        auto_tune_raw["enabled"] = auto_tune_enabled
+
+    validated_auto_tune = _validate_auto_tune(auto_tune_raw)
+
     return AppConfig(
         pair=validated_pair,
         timeframe=validated_timeframe,
@@ -200,6 +318,8 @@ def load_config(
         consensus_threshold=validated_threshold,
         strategies=validated_strategies,
         backtest=validated_backtest,
+        csv_export=validated_csv_export,
+        auto_tune=validated_auto_tune,
     )
 
 

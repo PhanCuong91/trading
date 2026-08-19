@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from forex_signals.config import AppConfig, ConfigError, load_config
+from forex_signals.config import AppConfig, AutoTuneConfig, ConfigError, load_config
 from forex_signals.data.models import Timeframe
 
 
@@ -229,3 +229,106 @@ class TestDefaultConfigFile:
             config = load_config(config_path=str(config_path))
             assert config.pair == "EURUSD=X"
             assert config.timeframe == Timeframe.M5
+
+
+class TestAutoTuneConfig:
+    """Tests for the optional auto_tune configuration section."""
+
+    def test_defaults_when_section_missing(self, valid_config_data, tmp_path):
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        config = load_config(config_path=str(path))
+        assert config.auto_tune.enabled is False
+        assert config.auto_tune.train_split == 0.7
+        assert config.auto_tune.consensus_threshold_values == [2, 3, 4, 5]
+
+    def test_loads_explicit_auto_tune_section(self, valid_config_data, tmp_path):
+        valid_config_data["auto_tune"] = {
+            "enabled": True,
+            "train_split": 0.6,
+            "consensus_threshold_values": [3, 4],
+            "strategy_param_values": {
+                "smi": {"period": [7, 14]},
+            },
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        config = load_config(config_path=str(path))
+        assert config.auto_tune.enabled is True
+        assert config.auto_tune.train_split == 0.6
+        assert config.auto_tune.consensus_threshold_values == [3, 4]
+        assert config.auto_tune.strategy_param_values["smi"]["period"] == [7, 14]
+
+    def test_auto_tune_section_not_dict_raises(self, valid_config_data, tmp_path):
+        valid_config_data["auto_tune"] = "not a dict"
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        with pytest.raises(ConfigError, match="auto_tune must be a mapping"):
+            load_config(config_path=str(path))
+
+
+class TestCsvExportConfig:
+    """Tests for the optional csv_export configuration section."""
+
+    def test_defaults_when_section_missing(self, valid_config_data, tmp_path):
+        """csv_export defaults to disabled with output_dir 'data' when omitted."""
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        config = load_config(config_path=str(path))
+        assert config.csv_export.enabled is False
+        assert config.csv_export.output_dir == "data"
+
+    def test_loads_explicit_csv_export_section(self, valid_config_data, tmp_path):
+        valid_config_data["csv_export"] = {"enabled": True, "output_dir": "exports"}
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        config = load_config(config_path=str(path))
+        assert config.csv_export.enabled is True
+        assert config.csv_export.output_dir == "exports"
+
+    def test_csv_export_not_dict_raises(self, valid_config_data, tmp_path):
+        valid_config_data["csv_export"] = "not a dict"
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        with pytest.raises(ConfigError, match="csv_export must be a mapping"):
+            load_config(config_path=str(path))
+
+    def test_csv_export_enabled_not_bool_raises(self, valid_config_data, tmp_path):
+        valid_config_data["csv_export"] = {"enabled": "yes"}
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        with pytest.raises(ConfigError, match="csv_export.enabled must be a boolean"):
+            load_config(config_path=str(path))
+
+    def test_csv_export_output_dir_empty_raises(self, valid_config_data, tmp_path):
+        valid_config_data["csv_export"] = {"output_dir": "   "}
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        with pytest.raises(ConfigError, match="csv_export.output_dir must be a non-empty string"):
+            load_config(config_path=str(path))
+
+    def test_cli_override_csv_export_enabled(self, config_file):
+        config = load_config(config_path=config_file, csv_export_enabled=True)
+        assert config.csv_export.enabled is True
+        assert config.csv_export.output_dir == "data"
+
+    def test_cli_override_csv_dir_implies_enabled(self, config_file):
+        config = load_config(config_path=config_file, csv_export_dir="custom_dir")
+        assert config.csv_export.enabled is True
+        assert config.csv_export.output_dir == "custom_dir"
+
+    def test_cli_override_no_save_csv_wins_over_dir(self, config_file):
+        """Explicit --no-save-csv should override the implicit enable from --csv-dir."""
+        config = load_config(
+            config_path=config_file, csv_export_enabled=False, csv_export_dir="custom_dir"
+        )
+        assert config.csv_export.enabled is False
+        assert config.csv_export.output_dir == "custom_dir"

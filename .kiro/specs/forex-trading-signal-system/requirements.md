@@ -12,6 +12,8 @@ A Python application that downloads forex data, applies 5 technical analysis str
 - Default timeframe: 5-minute candles (M5)
 - Configurable timeframe (M5, M15, H1, H4, D1, etc.)
 - Single pair initially (e.g., EUR/USD), designed for multi-pair extension later
+- Persist downloaded candlestick data to a local CSV file (e.g. `data/<pair>_<timeframe>_<start>_<end>.csv`)
+- CSV export is optional/configurable and does not block the backtest pipeline if disabled
 
 ### FR2: Trading Strategies
 
@@ -53,6 +55,18 @@ Five strategies, each producing a BUY, SELL, or NEUTRAL signal:
 - Unit tests for each strategy
 - Integration tests for the consensus engine
 - Backtest result validation tests
+
+### FR7: Auto-Tuning for Backtesting
+
+- Support an optional auto-tuning mode for backtesting
+- In this mode, the system shall search over candidate values for `consensus_threshold` and all strategy parameters across all configured strategies
+- The system shall evaluate each candidate configuration using a defined performance metric (e.g., Sharpe ratio or profit factor)
+- The system shall persist each evaluated candidate result to a CSV file, including the selected metric value, `consensus_threshold`, and the parameters used for every strategy
+- Each persisted tuning record shall also include the resulting backtest metrics needed for comparison, including `score`, `max_drawdown`, and `win_rate`
+- The system shall provide frequent, visible progress/status feedback during long-running auto-tuning sessions so users can clearly see that tuning is actively running, including messages at the start of tuning, before each candidate evaluation, and when a candidate completes or becomes the current best result
+- When auto-tuning resumes, the system shall check the existing tuning CSV file first and skip re-running any candidate combination that is already recorded there
+- The best-performing configuration shall be selected and used for the final backtest run
+- Auto-tuning shall remain optional and shall not change the current behavior when disabled
 
 ## Non-Functional Requirements
 

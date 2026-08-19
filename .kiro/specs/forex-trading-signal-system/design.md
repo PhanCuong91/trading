@@ -15,6 +15,65 @@ The system follows a pipeline architecture with clear separation between data ac
                             └──────────────┘                              (metrics output)
 ```
 
+## Auto-Tuning Design
+
+To satisfy the new backtesting requirement, the system will support an optional auto-tuning mode that searches for the best configuration before running the final backtest. The design keeps this feature modular so it can be enabled or disabled without changing the default workflow.
+
+### High-Level Flow
+
+```text
+Config -> Candidate Generator -> Backtest Evaluator -> Best Config Selector -> Final Backtest
+```
+
+1. Load the base configuration from YAML and CLI overrides.
+2. Build a candidate search space that varies:
+   - `consensus_threshold`
+   - every strategy parameter defined under the `strategies` section for all configured strategies
+3. For each candidate configuration, run a backtest on a training window (for example, the first 70% of the data) and score it using a primary metric such as Sharpe ratio, with profit factor as a secondary fallback.
+4. Persist each evaluated candidate in a CSV log with at least the `score`, `max_drawdown`, `win_rate`, `consensus_threshold`, and the parameter values used for every strategy.
+5. Before evaluating a candidate, check whether that exact combination already exists in the tuning CSV file; if it does, skip re-running it and reuse the recorded result.
+6. Select the best-performing candidate.
+7. Run the full backtest with that selected configuration and report the winning parameters.
+
+### Proposed Components
+
+- `AutoTuningEngine`
+  - Responsible for generating candidate configurations, evaluating them, and selecting the best result.
+  - Lives in a new module such as `src/forex_signals/backtest/tuner.py`.
+  - Emits frequent progress/status messages while tuning is running, including startup, per-candidate progress, and best-result updates.
+  - Writes each evaluated candidate to a CSV log file with the score, max drawdown, win rate, consensus threshold, and all strategy parameters.
+
+- `TuningResult`
+  - Stores the selected configuration, the score used for ranking, and the full ranking of evaluated candidates.
+
+- `AutoTuneConfig`
+  - Optional configuration block added to the app config, for example:
+    - `enabled: false`
+    - `train_split: 0.7`
+    - `consensus_threshold_values: [2, 3, 4, 5]`
+    - `strategy_param_variations`: user-defined candidate values for each strategy parameter
+
+### Search Strategy
+
+The first implementation should use a simple grid search approach:
+
+- Keep the search space small and deterministic.
+- Tune `consensus_threshold` and all parameters for every configured strategy.
+- Evaluate each combination against the same dataset segment.
+- Prefer the configuration with the best Sharpe ratio; if that metric is unavailable or tied, fall back to profit factor.
+- Reuse recorded entries from the tuning CSV file to avoid repeating work when the search is resumed, and print a clear skip message when a candidate has already been completed.
+
+### CLI Integration
+
+The CLI will expose an optional flag such as `--auto-tune` to enable the feature. When enabled, the backtest command will:
+
+- run the tuning process first,
+- print progress messages during tuning,
+- append each evaluated candidate result to a CSV log file,
+- print the selected configuration,
+- skip already-recorded combinations when resuming from an existing tuning CSV file,
+- then execute the final backtest using the tuned parameters.
+
 ## Package Structure
 
 ```
@@ -306,7 +365,8 @@ class YahooDataDownloader:
     """Downloads OHLC data from Yahoo Finance."""
 
     def download(self, pair: str, timeframe: Timeframe,
-                 start: datetime, end: datetime) -> List[Candle]:
+                 start: datetime, end: datetime,
+                 csv_output_dir: Optional[str] = None) -> List[Candle]:
         """
         Fetch candlestick data from Yahoo Finance.
 
@@ -315,9 +375,36 @@ class YahooDataDownloader:
             timeframe: Candle timeframe
             start: Start datetime
             end: End datetime
+            csv_output_dir: If provided, write the downloaded candles to a CSV
+                             file in this directory (created if missing) instead
+                             of only returning them in memory.
 
         Returns:
             List of Candle objects, sorted by timestamp ascending
+        """
+        ...
+
+    def export_to_csv(self, candles: List[Candle], pair: str,
+                       timeframe: Timeframe, start: datetime, end: datetime,
+                       output_dir: str) -> str:
+        """
+        Write candles to a CSV file with columns:
+        timestamp, open, high, low, close, volume.
+
+        The filename is derived from the pair, timeframe, and date range,
+        e.g. `data/EURUSDX_M5_20260601_20260729.csv` (pair symbols are
+        sanitized for filesystem safety, e.g. "=" is stripped).
+
+        Args:
+            candles: Candles to write.
+            pair: Forex pair symbol (used to build the filename).
+            timeframe: Candle timeframe (used to build the filename).
+            start: Range start (used to build the filename).
+            end: Range end (used to build the filename).
+            output_dir: Directory to write the CSV file into.
+
+        Returns:
+            The absolute path of the written CSV file.
         """
         ...
 ```
@@ -371,6 +458,13 @@ strategies:
 backtest:
   start_date: "2024-01-01"
   end_date: "2024-12-31"
+
+# Optional: persist downloaded candles to CSV for reuse/offline analysis.
+# Disabled by default; when enabled, the CLI writes a CSV file named
+# <pair>_<timeframe>_<start>_<end>.csv into output_dir.
+csv_export:
+  enabled: false
+  output_dir: "data"
 ```
 
 ## Strategy Details
@@ -413,6 +507,7 @@ backtest:
 - **Invalid configuration**: Config loader validates all values at startup, raises `ConfigError` with descriptive message
 - **Division by zero in metrics**: Handled gracefully (0.0 for empty trade lists, inf for zero denominators where appropriate)
 - **Yahoo Finance data gaps**: Missing candles are detected and logged; backtester skips gaps rather than interpolating
+- **CSV export failures**: Errors writing the CSV file (e.g. permission or disk errors) are logged as warnings and do not abort the backtest — CSV export is a best-effort side effect, not a pipeline dependency
 
 ## Extensibility Points
 

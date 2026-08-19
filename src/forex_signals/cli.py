@@ -1,5 +1,6 @@
 """CLI entry point for the forex trading signal system."""
 
+import os
 import sys
 from typing import Optional
 
@@ -7,6 +8,7 @@ import click
 
 from forex_signals.backtest.engine import BacktestEngine
 from forex_signals.config import ConfigError, load_config
+from forex_signals.backtest.tuner import AutoTuningEngine
 from forex_signals.consensus.engine import ConsensusEngine
 from forex_signals.data.downloader import DataDownloadError, YahooDataDownloader
 from forex_signals.data.models import BacktestResult
@@ -65,6 +67,45 @@ def _build_strategies(config):
     return strategies
 
 
+def _build_strategies_from_params(config, tuned_params):
+    """Instantiate strategies from a tuned parameter mapping."""
+    strategy_map = {
+        "smi": lambda params: SMIStrategy(
+            period=params.get("period", 14),
+            smooth_period=params.get("smooth_period", 3),
+        ),
+        "moving_average": lambda params: MovingAverageCrossoverStrategy(
+            fast_period=params.get("fast_period", 10),
+            slow_period=params.get("slow_period", 50),
+        ),
+        "rsi": lambda params: RSIStrategy(
+            period=params.get("period", 14),
+            overbought=params.get("overbought", 70),
+            oversold=params.get("oversold", 30),
+        ),
+        "macd": lambda params: MACDStrategy(
+            fast_period=params.get("fast_period", 12),
+            slow_period=params.get("slow_period", 26),
+            signal_period=params.get("signal_period", 9),
+        ),
+        "bollinger": lambda params: BollingerBandsStrategy(
+            period=params.get("period", 20),
+            std_dev=params.get("std_dev", 2.0),
+        ),
+    }
+
+    strategies = []
+    for name, strategy_config in config.strategies.items():
+        factory = strategy_map.get(name)
+        if factory is None:
+            click.echo(f"Warning: Unknown strategy '{name}', skipping.", err=True)
+            continue
+        params = tuned_params.get(name, {})
+        strategies.append(factory(params))
+
+    return strategies
+
+
 def _print_results(result: BacktestResult) -> None:
     """Pretty-print backtest results as a formatted metrics table.
 
@@ -109,6 +150,14 @@ def main():
 @click.option("--tp-pips", type=float, default=None, help="Take-profit in pips.")
 @click.option("--start-date", default=None, help="Backtest start date (YYYY-MM-DD).")
 @click.option("--end-date", default=None, help="Backtest end date (YYYY-MM-DD).")
+@click.option(
+    "--save-csv/--no-save-csv",
+    "save_csv",
+    default=None,
+    help="Enable/disable exporting downloaded candles to a CSV file.",
+)
+@click.option("--csv-dir", default=None, help="Directory to write the CSV export into.")
+@click.option("--auto-tune", is_flag=True, default=False, help="Automatically tune consensus threshold and strategy parameters before the final backtest.")
 def backtest(
     config_path: Optional[str],
     pair: Optional[str],
@@ -117,6 +166,9 @@ def backtest(
     tp_pips: Optional[float],
     start_date: Optional[str],
     end_date: Optional[str],
+    save_csv: Optional[bool],
+    csv_dir: Optional[str],
+    auto_tune: bool,
 ) -> None:
     """Run a backtest with the configured strategies."""
     # Load configuration with CLI overrides
@@ -127,6 +179,9 @@ def backtest(
             timeframe=timeframe,
             sl_pips=sl_pips,
             tp_pips=tp_pips,
+            csv_export_enabled=save_csv,
+            csv_export_dir=csv_dir,
+            auto_tune_enabled=auto_tune,
         )
     except ConfigError as e:
         click.echo(f"Configuration error: {e}", err=True)
@@ -170,24 +225,87 @@ def backtest(
     consensus = ConsensusEngine(threshold=config.consensus_threshold)
     order_manager = OrderManager(sl_pips=config.sl_pips, tp_pips=config.tp_pips)
 
-    # Download data
-    click.echo(
-        f"Downloading {config.pair} data ({config.timeframe.name}) "
-        f"from {backtest_start.date()} to {backtest_end.date()}..."
-    )
     downloader = YahooDataDownloader()
-    try:
-        candles = downloader.download(
+
+    # If CSV export is enabled and a matching cached CSV file already exists,
+    # load candles from it and skip the download entirely.
+    cached_csv_path = None
+    if config.csv_export.enabled:
+        cached_csv_path = downloader.get_csv_path(
             pair=config.pair,
             timeframe=config.timeframe,
             start=backtest_start,
             end=backtest_end,
+            output_dir=config.csv_export.output_dir,
         )
-    except DataDownloadError as e:
-        click.echo(f"Data download error: {e}", err=True)
-        sys.exit(1)
 
-    click.echo(f"Downloaded {len(candles)} candles.")
+    if cached_csv_path and os.path.exists(cached_csv_path):
+        click.echo(f"Found cached CSV file, skipping download: {cached_csv_path}")
+        try:
+            candles = downloader.load_from_csv(cached_csv_path)
+        except DataDownloadError as e:
+            click.echo(f"Data download error: {e}", err=True)
+            sys.exit(1)
+        click.echo(f"Loaded {len(candles)} candles from CSV.")
+    else:
+        # Download data
+        click.echo(
+            f"Downloading {config.pair} data ({config.timeframe.name}) "
+            f"from {backtest_start.date()} to {backtest_end.date()}..."
+        )
+        try:
+            candles = downloader.download(
+                pair=config.pair,
+                timeframe=config.timeframe,
+                start=backtest_start,
+                end=backtest_end,
+            )
+        except DataDownloadError as e:
+            click.echo(f"Data download error: {e}", err=True)
+            sys.exit(1)
+
+        click.echo(f"Downloaded {len(candles)} candles.")
+
+        # Export to CSV if enabled
+        if config.csv_export.enabled:
+            try:
+                csv_path = downloader.export_to_csv(
+                    candles,
+                    pair=config.pair,
+                    timeframe=config.timeframe,
+                    start=backtest_start,
+                    end=backtest_end,
+                    output_dir=config.csv_export.output_dir,
+                )
+                click.echo(f"Candles exported to CSV: {csv_path}")
+            except OSError as e:
+                click.echo(f"Warning: failed to export candles to CSV: {e}", err=True)
+
+    if config.auto_tune.enabled:
+        tuning_output_path = None
+        if config.csv_export.enabled:
+            tuning_output_path = os.path.join(
+                config.csv_export.output_dir,
+                f"auto_tune_results_{config.pair.replace('/', '_').replace('=', '')}.csv",
+            )
+
+        click.echo("Auto-tuning is running. Please wait while the system evaluates candidate configurations...")
+        if tuning_output_path and os.path.exists(tuning_output_path):
+            click.echo(f"Found existing tuning results file: {tuning_output_path}")
+        tuner = AutoTuningEngine(
+            strategies=strategies,
+            order_manager=order_manager,
+            train_split=config.auto_tune.train_split,
+            consensus_threshold_values=config.auto_tune.consensus_threshold_values,
+            strategy_param_values=config.auto_tune.strategy_param_values,
+            output_path=tuning_output_path,
+        )
+        tuning_result = tuner.tune(candles)
+        click.echo(
+            f"Auto-tuning selected consensus_threshold={tuning_result.consensus_threshold} and strategy params={tuning_result.strategy_params}"
+        )
+        strategies = _build_strategies_from_params(config, tuning_result.strategy_params)
+        consensus = ConsensusEngine(threshold=tuning_result.consensus_threshold)
 
     # Run backtest
     engine = BacktestEngine(

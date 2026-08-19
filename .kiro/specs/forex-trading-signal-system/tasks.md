@@ -37,6 +37,13 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Detect and log data gaps
     - _Requirements: FR1.1, FR1.2, FR1.3_
 
+  - [x] 1.5 Implement CSV export for downloaded candle data
+    - Add `export_to_csv` method to `YahooDataDownloader` (or a helper module) that writes candles to a CSV file with columns `timestamp, open, high, low, close, volume`
+    - Derive filename from pair, timeframe, and date range (e.g. `data/EURUSDX_M5_20260601_20260729.csv`), sanitizing the pair symbol for filesystem safety
+    - Create the output directory if it does not exist
+    - CSV write failures are logged as warnings and do not abort the backtest
+    - _Requirements: FR1 (CSV export)_
+
 - [x] 2. Implement trading strategies
   - [x] 2.1 Implement strategy base protocol
     - Create `src/forex_signals/strategies/base.py` with `Strategy` Protocol
@@ -215,6 +222,23 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     - Handle errors gracefully with user-friendly messages
     - _Requirements: FR1, FR2, FR3, FR4, FR5_
 
+  - [x] 8.4 Wire CSV export into config and CLI
+    - Add `csv_export.enabled` and `csv_export.output_dir` fields to `config.py` (default `enabled: false`, `output_dir: "data"`)
+    - Add `--save-csv/--no-save-csv` and `--csv-dir` CLI options to the `backtest` command, overriding config values
+    - After a successful download, call `export_to_csv` when enabled and print the written file path
+    - _Requirements: FR1 (CSV export)_
+
+  - [ ] 8.5 Implement optional auto-tuning for backtesting
+    - Add an `auto_tune` configuration section with `enabled`, `train_split`, and candidate value definitions
+    - Implement a tuning engine that generates candidate configurations by varying `consensus_threshold` and every strategy parameter across all configured strategies
+    - Evaluate each candidate using a defined metric such as Sharpe ratio or profit factor over a training window
+    - Persist each evaluated candidate result to a CSV file including the metric score, `max_drawdown`, `win_rate`, `consensus_threshold`, and all strategy parameter values
+    - Emit frequent progress/status messages during long-running tuning sessions so the user can clearly see that tuning is still in progress, including startup, per-candidate progress, and best-result updates
+    - When tuning resumes, check the existing tuning CSV file first and skip re-running any candidate combination that is already recorded there, while printing a clear skip message for already-completed candidates
+    - Select the best-performing configuration and use it for the final backtest run
+    - Expose an optional CLI flag such as `--auto-tune` and print the selected configuration before running the final backtest
+    - _Requirements: FR7_
+
 - [ ] 9. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
@@ -236,13 +260,14 @@ Build a Python forex trading signal system with a pipeline architecture: Data So
     { "id": 0, "tasks": ["1.1"] },
     { "id": 1, "tasks": ["1.2", "1.3"] },
     { "id": 2, "tasks": ["1.4", "2.1"] },
-    { "id": 3, "tasks": ["2.2", "2.3", "2.4", "2.5", "2.6", "3.1", "5.1"] },
+    { "id": 3, "tasks": ["1.5", "2.2", "2.3", "2.4", "2.5", "2.6", "3.1", "5.1"] },
     { "id": 4, "tasks": ["2.7", "2.8", "3.2", "3.3", "3.4", "5.2", "5.3", "5.4"] },
     { "id": 5, "tasks": ["6.1"] },
     { "id": 6, "tasks": ["6.2", "6.3", "6.4", "6.5", "6.6", "6.7"] },
     { "id": 7, "tasks": ["6.8", "8.1"] },
     { "id": 8, "tasks": ["8.2"] },
-    { "id": 9, "tasks": ["8.3"] }
+    { "id": 9, "tasks": ["8.3"] },
+    { "id": 10, "tasks": ["8.4", "8.5"] }
   ]
 }
 ```
