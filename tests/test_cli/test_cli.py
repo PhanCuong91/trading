@@ -402,3 +402,27 @@ class TestPrintResults:
         assert "Sharpe Ratio" in captured.out
         assert "Profit Factor" in captured.out
         assert "Avg Trade Duration" in captured.out
+
+
+class TestLiveCommand:
+    """Tests for the `live` CLI subcommand."""
+
+    @patch("forex_signals.cli.load_config")
+    def test_live_mock_broker(self, mock_load, runner, sample_config):
+        mock_load.return_value = sample_config
+        result = runner.invoke(
+            main,
+            ["live", "--mock", "--pair", "EURUSD", "--max-iterations", "2", "--poll-interval", "0.01"],
+        )
+        assert result.exit_code == 0
+        assert "MOCK broker simulation" in result.output
+        assert "Connected to broker" in result.output
+        assert "Broker disconnected" in result.output
+
+    @patch("forex_signals.cli.load_config")
+    def test_live_config_error(self, mock_load, runner):
+        mock_load.side_effect = ConfigError("Bad config")
+        result = runner.invoke(main, ["live"])
+        assert result.exit_code == 1
+        assert "Configuration error: Bad config" in result.output
+

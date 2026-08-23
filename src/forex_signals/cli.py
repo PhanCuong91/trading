@@ -317,3 +317,106 @@ def backtest(
 
     # Display results
     _print_results(result)
+
+
+@main.command()
+@click.option("--config", "config_path", default=None, help="Path to YAML config file.")
+@click.option("--pair", "--symbol", "symbol", default=None, help="Forex pair / symbol (e.g. EURUSD).")
+@click.option("--mock/--no-mock", "mock", default=None, help="Use mock broker instead of live MT5 socket bridge.")
+@click.option("--host", default=None, help="MT5 socket bridge host (default: 127.0.0.1).")
+@click.option("--port", type=int, default=None, help="MT5 socket bridge port (default: 5555).")
+@click.option("--lot-size", type=float, default=None, help="Order lot size (e.g. 0.1).")
+@click.option("--magic-number", type=int, default=None, help="Magic number for bot orders.")
+@click.option("--max-spread", type=float, default=None, help="Max allowable spread in pips.")
+@click.option("--poll-interval", type=float, default=None, help="Polling interval in seconds.")
+@click.option("--max-iterations", type=int, default=None, help="Stop after N iterations (for testing).")
+def live(
+    config_path: Optional[str],
+    symbol: Optional[str],
+    mock: Optional[bool],
+    host: Optional[str],
+    port: Optional[int],
+    lot_size: Optional[float],
+    magic_number: Optional[int],
+    max_spread: Optional[float],
+    poll_interval: Optional[float],
+    max_iterations: Optional[int],
+) -> None:
+    """Run live trading via MT5 Local TCP Socket Bridge (Method A) or Mock."""
+    try:
+        config = load_config(config_path=config_path)
+    except ConfigError as e:
+        click.echo(f"Configuration error: {e}", err=True)
+        sys.exit(1)
+
+    # Determine runtime options
+    is_mock = mock if mock is not None else config.mt5.mock
+    broker_host = host or config.mt5.host
+    broker_port = port or config.mt5.port
+    trade_symbol = symbol or config.mt5.symbol
+    trade_lot = lot_size if lot_size is not None else config.mt5.lot_size
+    bot_magic = magic_number if magic_number is not None else config.mt5.magic_number
+    max_spread_pips = max_spread if max_spread is not None else config.mt5.max_spread_pips
+    poll_sec = poll_interval if poll_interval is not None else config.mt5.poll_interval_seconds
+
+    # Instantiate Broker
+    if is_mock:
+        from forex_signals.broker.mock import MockBrokerClient
+
+        click.echo("Starting live trading engine with MOCK broker simulation...")
+        broker = MockBrokerClient()
+    else:
+        from forex_signals.broker.socket_client import SocketBrokerClient
+
+        click.echo(
+            f"Connecting to MT5 Socket Bridge at {broker_host}:{broker_port} "
+            f"for symbol {trade_symbol}..."
+        )
+        broker = SocketBrokerClient(
+            host=broker_host,
+            port=broker_port,
+            timeout=config.mt5.timeout_seconds,
+        )
+
+    try:
+        broker.connect()
+        acc = broker.get_account_info()
+        click.echo(
+            f"Connected to broker. Account: {acc.login} | Server: {acc.server} | "
+            f"Balance: {acc.balance:.2f} {acc.currency} | Equity: {acc.equity:.2f} {acc.currency}"
+        )
+    except Exception as e:
+        click.echo(f"Failed to connect to broker: {e}", err=True)
+        sys.exit(1)
+
+    # Build strategies and consensus
+    strategies = _build_strategies(config)
+    consensus = ConsensusEngine(threshold=config.consensus_threshold)
+    order_manager = OrderManager(
+        sl_pips=config.sl_pips,
+        tp_pips=config.tp_pips,
+    )
+
+    from forex_signals.broker.live_runner import LiveTradingEngine
+
+    engine = LiveTradingEngine(
+        broker=broker,
+        strategies=strategies,
+        consensus=consensus,
+        order_manager=order_manager,
+        symbol=trade_symbol,
+        timeframe=config.timeframe,
+        lot_size=trade_lot,
+        magic_number=bot_magic,
+        max_spread_pips=max_spread_pips,
+        poll_interval_seconds=poll_sec,
+    )
+
+    try:
+        engine.run(max_iterations=max_iterations)
+    except KeyboardInterrupt:
+        click.echo("\nLive trading terminated by user.")
+    finally:
+        broker.disconnect()
+        click.echo("Broker disconnected. Goodbye!")
+

@@ -50,6 +50,23 @@ class AutoTuneConfig:
 
 
 @dataclass(frozen=True)
+class Mt5Config:
+    """Configuration for MetaTrader 5 live trading via TCP Socket Bridge (Method A)."""
+
+    enabled: bool = False
+    mock: bool = False
+    host: str = "127.0.0.1"
+    port: int = 5555
+    symbol: str = "EURUSD"
+    lot_size: float = 0.1
+    magic_number: int = 100101
+    max_spread_pips: float = 2.5
+    deviation_points: int = 10
+    poll_interval_seconds: float = 5.0
+    timeout_seconds: float = 5.0
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Complete application configuration."""
 
@@ -64,6 +81,7 @@ class AppConfig:
         default_factory=lambda: CsvExportConfig(enabled=False, output_dir="data")
     )
     auto_tune: AutoTuneConfig = field(default_factory=AutoTuneConfig)
+    mt5: Mt5Config = field(default_factory=Mt5Config)
 
 
 # Mapping from config file timeframe string (enum name) to Timeframe enum
@@ -178,6 +196,58 @@ def _validate_auto_tune(value: Any) -> AutoTuneConfig:
         consensus_threshold_values=validated_thresholds,
         strategy_param_values=strategy_param_values,
     )
+
+
+def _validate_mt5_config(value: Any) -> Mt5Config:
+    """Validate the mt5 configuration section."""
+    if not isinstance(value, dict):
+        raise ConfigError("mt5 must be a mapping with MT5 configuration settings")
+
+    enabled = value.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"mt5.enabled must be a boolean, got: {enabled!r}")
+
+    mock = value.get("mock", False)
+    if not isinstance(mock, bool):
+        raise ConfigError(f"mt5.mock must be a boolean, got: {mock!r}")
+
+    host = value.get("host", "127.0.0.1")
+    if not isinstance(host, str) or not host.strip():
+        raise ConfigError("mt5.host must be a non-empty string")
+
+    port = value.get("port", 5555)
+    try:
+        port_int = int(port)
+    except (TypeError, ValueError):
+        raise ConfigError(f"mt5.port must be an integer, got: {port!r}")
+    if not 1 <= port_int <= 65535:
+        raise ConfigError(f"mt5.port must be between 1 and 65535, got: {port_int}")
+
+    symbol = value.get("symbol", "EURUSD")
+    if not isinstance(symbol, str) or not symbol.strip():
+        raise ConfigError("mt5.symbol must be a non-empty string")
+
+    lot_size = _validate_positive_number(value.get("lot_size", 0.1), "mt5.lot_size")
+    magic = int(value.get("magic_number", 100101))
+    max_spread = _validate_positive_number(value.get("max_spread_pips", 2.5), "mt5.max_spread_pips")
+    deviation = int(value.get("deviation_points", 10))
+    poll_int = _validate_positive_number(value.get("poll_interval_seconds", 5.0), "mt5.poll_interval_seconds")
+    timeout = _validate_positive_number(value.get("timeout_seconds", 5.0), "mt5.timeout_seconds")
+
+    return Mt5Config(
+        enabled=enabled,
+        mock=mock,
+        host=host,
+        port=port_int,
+        symbol=symbol,
+        lot_size=lot_size,
+        magic_number=magic,
+        max_spread_pips=max_spread,
+        deviation_points=deviation,
+        poll_interval_seconds=poll_int,
+        timeout_seconds=timeout,
+    )
+
 
 
 def load_config(
@@ -310,6 +380,11 @@ def load_config(
 
     validated_auto_tune = _validate_auto_tune(auto_tune_raw)
 
+    mt5_section = raw.get("mt5", {})
+    if not isinstance(mt5_section, dict):
+        raise ConfigError("mt5 must be a mapping with MT5 configuration settings")
+    validated_mt5 = _validate_mt5_config(mt5_section)
+
     return AppConfig(
         pair=validated_pair,
         timeframe=validated_timeframe,
@@ -320,7 +395,9 @@ def load_config(
         backtest=validated_backtest,
         csv_export=validated_csv_export,
         auto_tune=validated_auto_tune,
+        mt5=validated_mt5,
     )
+
 
 
 def _require_field(data: dict, field_name: str, section: str = "") -> None:

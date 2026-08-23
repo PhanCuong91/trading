@@ -2,136 +2,170 @@
 
 ## Architecture Overview
 
-The system follows a pipeline architecture with clear separation between data acquisition, signal generation, consensus decision-making, order management, and performance analysis. Each component is a standalone module with well-defined interfaces, enabling independent testing and future extension (e.g., MT5 integration, new strategies).
+The Forex Trading Signal System follows a modular pipeline architecture with strict separation between data acquisition, signal generation, consensus decision-making, order management, backtesting/performance analysis, and live MetaTrader 5 broker execution.
 
+### High-Level Architecture (Method A: Local TCP Socket Bridge for macOS)
+
+```plantuml
+@startuml High_Level_Architecture
+!theme plain
+skinparam componentStyle uml2
+skinparam roundcorner 8
+skinparam shadowing false
+skinparam defaultFontName "Helvetica", "Arial", sans-serif
+
+package "Configuration Layer" {
+    [Application Config\n(config.yaml & CLI)] as Config
+}
+
+package "Data Acquisition Layer" {
+    [Yahoo Finance Downloader\n(yfinance / CSV Export)] as YahooDownloader
+    [Socket MT5 Market Feed\n(127.0.0.1:5555)] as SocketDataFeed
+}
+
+package "Signal Generation Layer" {
+    component "Strategy Engine" as StrategyEngine {
+        [1. SMI Strategy] as SMI
+        [2. MA Crossover] as MA
+        [3. RSI Strategy] as RSI
+        [4. MACD Strategy] as MACD
+        [5. Bollinger Bands] as BB
+    }
+}
+
+package "Consensus & Risk Layer" {
+    [Consensus Engine\n(4/5 Threshold Voting)] as ConsensusEngine
+    [Order Manager\n(SL/TP Pips, Sizing, Risk Gate)] as OrderManager
+}
+
+package "Execution & Evaluation Layer" {
+    component "Backtesting Pipeline" {
+        [Backtest Engine\n(Bar-by-Bar Simulation)] as BacktestEngine
+        [Auto-Tuning Engine\n(Grid Search & CSV Log)] as AutoTuning
+        [Metrics Calculator\n(Sharpe, Win Rate, Drawdown)] as MetricsCalc
+    }
+    
+    component "Live Execution Pipeline (macOS Method A)" {
+        [Socket Broker Client\n(TCP JSON Client)] as SocketClient
+        [Mock Broker Client\n(Offline Simulator)] as MockClient
+        [Live Trading Runner\n(Candle Poller / Event Loop)] as LiveRunner
+    }
+}
+
+node "MetaTrader 5 on macOS (Wine/CrossOver)" as MT5Node {
+    [ForexBridge.mq5 Expert Advisor\n(TCP Server on 127.0.0.1:5555)] as ForexBridgeEA
+    [Broker Terminal & Trade Server] as MT5Terminal
+}
+
+' Relationships
+Config --> YahooDownloader : configures
+Config --> StrategyEngine : parameters
+Config --> ConsensusEngine : threshold
+Config --> OrderManager : sl/tp pips
+Config --> SocketClient : host/port
+
+YahooDownloader --> StrategyEngine : Historical Candles
+SocketDataFeed --> StrategyEngine : Live Streamed Candles
+
+SMI --> ConsensusEngine : Signal (BUY/SELL/NEUT)
+MA --> ConsensusEngine : Signal (BUY/SELL/NEUT)
+RSI --> ConsensusEngine : Signal (BUY/SELL/NEUT)
+MACD --> ConsensusEngine : Signal (BUY/SELL/NEUT)
+BB --> ConsensusEngine : Signal (BUY/SELL/NEUT)
+
+ConsensusEngine --> OrderManager : Consensus Signal
+
+OrderManager --> BacktestEngine : Simulated Orders
+BacktestEngine --> MetricsCalc : Trade Log
+AutoTuning --> BacktestEngine : Evaluates Grid Combinations
+
+OrderManager --> LiveRunner : Live Orders
+LiveRunner --> SocketClient : Dispatch Trade
+SocketClient <--> ForexBridgeEA : TCP JSON (Port 5555)
+ForexBridgeEA <--> MT5Terminal : Native MQL5 Trade API
+SocketClient --> MockClient : (Fallback / Offline)
+
+@enduml
 ```
-┌─────────────┐    ┌─────────────────┐    ┌───────────────┐    ┌──────────────┐    ┌─────────────┐
-│ Data Source  │───▶│ Strategy Engine  │───▶│   Consensus   │───▶│    Order     │───▶│  Backtest   │
-│  (Yahoo)    │    │  (5 strategies) │    │    Engine      │    │   Manager    │    │   Engine    │
-└─────────────┘    └─────────────────┘    └───────────────┘    └──────────────┘    └─────────────┘
-       ▲                                                                                    │
-       │                    ┌──────────────┐                                                │
-       └────────────────────│    Config    │◀───────────────────────────────────────────────┘
-                            └──────────────┘                              (metrics output)
-```
 
-## Auto-Tuning Design
-
-To satisfy the new backtesting requirement, the system will support an optional auto-tuning mode that searches for the best configuration before running the final backtest. The design keeps this feature modular so it can be enabled or disabled without changing the default workflow.
-
-### High-Level Flow
-
-```text
-Config -> Candidate Generator -> Backtest Evaluator -> Best Config Selector -> Final Backtest
-```
-
-1. Load the base configuration from YAML and CLI overrides.
-2. Build a candidate search space that varies:
-   - `consensus_threshold`
-   - every strategy parameter defined under the `strategies` section for all configured strategies
-3. For each candidate configuration, run a backtest on a training window (for example, the first 70% of the data) and score it using a primary metric such as Sharpe ratio, with profit factor as a secondary fallback.
-4. Persist each evaluated candidate in a CSV log with at least the `score`, `max_drawdown`, `win_rate`, `consensus_threshold`, and the parameter values used for every strategy.
-5. Before evaluating a candidate, check whether that exact combination already exists in the tuning CSV file; if it does, skip re-running it and reuse the recorded result.
-6. Select the best-performing candidate.
-7. Run the full backtest with that selected configuration and report the winning parameters.
-
-### Proposed Components
-
-- `AutoTuningEngine`
-  - Responsible for generating candidate configurations, evaluating them, and selecting the best result.
-  - Lives in a new module such as `src/forex_signals/backtest/tuner.py`.
-  - Emits frequent progress/status messages while tuning is running, including startup, per-candidate progress, and best-result updates.
-  - Writes each evaluated candidate to a CSV log file with the score, max drawdown, win rate, consensus threshold, and all strategy parameters.
-
-- `TuningResult`
-  - Stores the selected configuration, the score used for ranking, and the full ranking of evaluated candidates.
-
-- `AutoTuneConfig`
-  - Optional configuration block added to the app config, for example:
-    - `enabled: false`
-    - `train_split: 0.7`
-    - `consensus_threshold_values: [2, 3, 4, 5]`
-    - `strategy_param_variations`: user-defined candidate values for each strategy parameter
-
-### Search Strategy
-
-The first implementation should use a simple grid search approach:
-
-- Keep the search space small and deterministic.
-- Tune `consensus_threshold` and all parameters for every configured strategy.
-- Evaluate each combination against the same dataset segment.
-- Prefer the configuration with the best Sharpe ratio; if that metric is unavailable or tied, fall back to profit factor.
-- Reuse recorded entries from the tuning CSV file to avoid repeating work when the search is resumed, and print a clear skip message when a candidate has already been completed.
-
-### CLI Integration
-
-The CLI will expose an optional flag such as `--auto-tune` to enable the feature. When enabled, the backtest command will:
-
-- run the tuning process first,
-- print progress messages during tuning,
-- append each evaluated candidate result to a CSV log file,
-- print the selected configuration,
-- skip already-recorded combinations when resuming from an existing tuning CSV file,
-- then execute the final backtest using the tuned parameters.
+---
 
 ## Package Structure
 
 ```
-trade/
+trading/
 ├── pyproject.toml
-├── config.yaml                  # Default configuration
+├── config.yaml                       # Default application & MT5 bridge configuration
+├── requirements.md                   # Requirements specification
+├── README.md                         # Project documentation & macOS MT5 setup guide
+├── scripts/
+│   └── mt5/
+│       └── ForexBridge.mq5           # MQL5 Expert Advisor script for MT5 (Method A)
 ├── src/
 │   └── forex_signals/
 │       ├── __init__.py
-│       ├── cli.py               # CLI entry point
-│       ├── config.py            # Configuration loading & validation
+│       ├── cli.py                    # CLI entry points (backtest, live)
+│       ├── config.py                 # Configuration models, validation & YAML loading
 │       ├── data/
 │       │   ├── __init__.py
-│       │   ├── models.py        # Candle, OHLC data models
-│       │   └── downloader.py    # Yahoo Finance data fetcher
+│       │   ├── models.py             # Timeframe, Signal, Candle, OrderStatus
+│       │   └── downloader.py         # Yahoo Finance data fetcher & CSV export
 │       ├── strategies/
 │       │   ├── __init__.py
-│       │   ├── base.py          # Strategy protocol/ABC
-│       │   ├── smi.py           # Stochastic Momentum Index
-│       │   ├── moving_average.py # MA crossover
-│       │   ├── rsi.py           # Relative Strength Index
-│       │   ├── macd.py          # MACD
-│       │   └── bollinger.py     # Bollinger Bands
+│       │   ├── base.py               # Strategy protocol interface
+│       │   ├── smi.py                # Stochastic Momentum Index
+│       │   ├── moving_average.py      # Moving Average crossover
+│       │   ├── rsi.py                # Relative Strength Index
+│       │   ├── macd.py                # MACD oscillator
+│       │   └── bollinger.py          # Bollinger Bands breakout/reversal
 │       ├── consensus/
 │       │   ├── __init__.py
-│       │   └── engine.py        # Consensus logic
+│       │   └── engine.py             # Consensus voting logic
 │       ├── orders/
 │       │   ├── __init__.py
-│       │   ├── models.py        # Order, Position data models
-│       │   └── manager.py       # Order lifecycle management
+│       │   ├── models.py             # Order, Position models
+│       │   └── manager.py            # Order lifecycle & SL/TP price calculator
 │       ├── backtest/
 │       │   ├── __init__.py
-│       │   ├── engine.py        # Backtesting orchestrator
-│       │   └── metrics.py       # Performance metric calculations
+│       │   ├── engine.py             # Backtest orchestrator
+│       │   ├── metrics.py            # Performance metrics calculator
+│       │   └── tuner.py              # Grid search auto-tuner & CSV persistence
 │       └── broker/
 │           ├── __init__.py
-│           └── base.py          # Broker protocol (for future MT5)
+│           ├── base.py               # Broker protocol & interface
+│           ├── models.py             # Account, symbol, position, execution models
+│           ├── socket_client.py      # TCP Socket client for macOS MT5 (Method A)
+│           ├── live_runner.py        # Live trading synchronization & execution loop
+│           └── mock.py               # Mock broker for cross-platform/CI testing
 └── tests/
     ├── conftest.py
-    ├── test_strategies/
-    ├── test_consensus/
-    ├── test_orders/
-    ├── test_backtest/
-    └── test_metrics/
+    ├── test_strategies/              # Unit & property tests for strategies
+    ├── test_consensus/               # Consensus voting tests
+    ├── test_orders/                  # Order management & SL/TP calculation tests
+    ├── test_backtest/                # Backtesting engine & auto-tuner tests
+    ├── test_metrics/                 # Performance metric accuracy tests
+    ├── test_broker/                  # Socket client, mock bridge & live loop tests
+    ├── test_config/                  # Config parsing & validation tests
+    ├── test_data/                    # Downloader & CSV export tests
+    └── test_cli/                     # CLI command integration tests
 ```
+
+---
 
 ## Data Models
 
 ```python
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class Timeframe(Enum):
+    M1 = "1m"
     M5 = "5m"
     M15 = "15m"
+    M30 = "30m"
     H1 = "1h"
     H4 = "4h"
     D1 = "1d"
@@ -144,9 +178,13 @@ class Signal(Enum):
 
 
 class OrderStatus(Enum):
+    PENDING = "PENDING"
     OPEN = "OPEN"
     CLOSED_TP = "CLOSED_TP"
     CLOSED_SL = "CLOSED_SL"
+    CLOSED_SIGNAL = "CLOSED_SIGNAL"
+    CLOSED_MANUAL = "CLOSED_MANUAL"
+    CANCELLED = "CANCELLED"
 
 
 @dataclass(frozen=True)
@@ -168,15 +206,20 @@ class StrategySignal:
 
 @dataclass
 class Order:
-    direction: Signal  # BUY or SELL only
+    direction: Signal  # BUY or SELL
     entry_price: float
     stop_loss: float
     take_profit: float
     entry_time: datetime
+    lot_size: float = 0.1
+    ticket: Optional[int] = None
+    magic_number: Optional[int] = None
     exit_time: Optional[datetime] = None
     exit_price: Optional[float] = None
     status: OrderStatus = OrderStatus.OPEN
     pnl: Optional[float] = None
+    pnl_pips: Optional[float] = None
+    comment: str = ""
 
 
 @dataclass(frozen=True)
@@ -199,243 +242,310 @@ class BacktestResult:
     profit_factor: float
     avg_trade_duration_seconds: float
     num_trades: int
+
+
+# --- MT5 & Live Trading Models (Method A) ---
+
+class BrokerType(Enum):
+    SOCKET = "socket"
+    MOCK = "mock"
+
+
+@dataclass(frozen=True)
+class AccountInfo:
+    login: int
+    server: str
+    currency: str
+    balance: float
+    equity: float
+    margin: float
+    free_margin: float
+    leverage: int
+
+
+@dataclass(frozen=True)
+class SymbolInfo:
+    name: str
+    digits: int
+    point: float
+    pip_size: float
+    spread_points: int
+    spread_pips: float
+    min_lot: float
+    max_lot: float
+    lot_step: float
+    stop_level_points: int
+    trade_contract_size: float
+
+
+@dataclass
+class Position:
+    ticket: int
+    symbol: str
+    direction: Signal
+    volume: float
+    open_price: float
+    stop_loss: float
+    take_profit: float
+    open_time: datetime
+    current_price: float
+    profit: float
+    magic: int
+    comment: str
+
+
+@dataclass(frozen=True)
+class TradeExecutionResult:
+    success: bool
+    retcode: int
+    ticket: Optional[int]
+    order_id: Optional[str]
+    price: float
+    volume: float
+    timestamp: datetime
+    error_message: str = ""
 ```
 
-## Component Interfaces
+---
 
-### Strategy Protocol
+## Method A: Local TCP Socket Bridge Design
 
-```python
-from typing import Protocol, List
+### Communication Protocol Specification
 
-class Strategy(Protocol):
-    """All strategies implement this interface."""
+Native macOS Python acts as a TCP client connecting to `127.0.0.1:<port>` (default `5555`), where the MT5 Expert Advisor (`ForexBridge.mq5`) listens. Messages are framed as newline-delimited JSON objects (`\n`).
 
-    @property
-    def name(self) -> str:
-        """Human-readable strategy name."""
-        ...
+```plantuml
+@startuml Socket_Bridge_Protocol
+!theme plain
+skinparam shadowing false
+skinparam roundcorner 6
+autonumber
 
-    def generate_signal(self, candles: List[Candle]) -> Signal:
-        """
-        Given a sequence of historical candles (most recent last),
-        produce a BUY, SELL, or NEUTRAL signal.
+participant "macOS Python Client\n(SocketBrokerClient)" as PythonClient
+participant "MT5 Expert Advisor\n(ForexBridge.mq5)" as EA
+participant "MT5 Terminal /\nBroker Server" as Broker
 
-        Requires: len(candles) >= self.min_candles
-        Returns: Signal enum value
-        """
-        ...
+== 1. Connection & Heartbeat ==
+PythonClient -> EA: Connect TCP (127.0.0.1:5555)
+PythonClient -> EA: {"action": "PING"}
+EA -> PythonClient: {"status": "OK", "time": "2026-08-19 22:15:00", "server": "MetaQuotes-Demo"}
 
-    @property
-    def min_candles(self) -> int:
-        """Minimum number of candles required to produce a signal."""
-        ...
+== 2. Account & Symbol Synchronization ==
+PythonClient -> EA: {"action": "ACCOUNT_INFO"}
+EA -> Broker: Query Account (Balance, Equity, Margin)
+Broker --> EA: Account Properties
+EA -> PythonClient: {"status": "OK", "balance": 10000.0, "equity": 10000.0, "free_margin": 10000.0}
+
+PythonClient -> EA: {"action": "SYMBOL_INFO", "symbol": "EURUSD"}
+EA -> Broker: Query Symbol (Point, Digits, Spread, Lot)
+Broker --> EA: Symbol Properties
+EA -> PythonClient: {"status": "OK", "digits": 5, "point": 0.00001, "spread_pips": 1.2, "stop_level": 0}
+
+== 3. Market Data Ingestion ==
+PythonClient -> EA: {"action": "GET_CANDLES", "symbol": "EURUSD", "timeframe": "M5", "count": 100}
+EA -> Broker: CopyRates(symbol, M5, 0, count)
+Broker --> EA: MqlRates[] array
+EA -> PythonClient: {"status": "OK", "candles": [{"timestamp": 1783680000, "open": 1.0850, ...}, ...]}
+
+== 4. Order Execution ==
+note over PythonClient
+Consensus Triggered: BUY
+SL: 20 pips, TP: 40 pips
+Spread Check: 1.2 <= 2.5 pips (PASS)
+end note
+
+PythonClient -> EA: {"action": "ORDER_SEND", "symbol": "EURUSD", "type": "BUY", "volume": 0.1, "sl": 1.0830, "tp": 1.0890, "magic": 100101}
+EA -> Broker: OrderSend(MqlTradeRequest)
+Broker --> EA: MqlTradeResult (retcode 10009)
+EA -> PythonClient: {"status": "OK", "ticket": 7891234, "price": 1.0850, "retcode": 10009}
+
+== 5. Position Tracking & Exit ==
+PythonClient -> EA: {"action": "GET_POSITIONS", "magic": 100101}
+EA -> Broker: PositionsTotal & PositionGetTicket
+Broker --> EA: Active Position Details
+EA -> PythonClient: {"status": "OK", "positions": [{"ticket": 7891234, "profit": 15.0, ...}]}
+
+PythonClient -> EA: {"action": "ORDER_CLOSE", "ticket": 7891234, "deviation": 10}
+EA -> Broker: OrderSend(Close Deal)
+Broker --> EA: MqlTradeResult (retcode 10009)
+EA -> PythonClient: {"status": "OK", "ticket": 7891234, "retcode": 10009, "comment": "Closed"}
+
+@enduml
 ```
 
-### Consensus Engine
+### JSON Protocol Commands & Responses
+
+1. **`PING`**:
+   - Request: `{"action": "PING"}`
+   - Response: `{"status": "OK", "time": "2026-08-19 22:15:00", "server": "MetaQuotes-Demo"}`
+2. **`ACCOUNT_INFO`**:
+   - Request: `{"action": "ACCOUNT_INFO"}`
+   - Response: `{"status": "OK", "login": 123456, "server": "MetaQuotes-Demo", "currency": "USD", "balance": 10000.0, "equity": 10000.0, "free_margin": 10000.0, "margin": 0.0, "leverage": 100}`
+3. **`SYMBOL_INFO`**:
+   - Request: `{"action": "SYMBOL_INFO", "symbol": "EURUSD"}`
+   - Response: `{"status": "OK", "symbol": "EURUSD", "digits": 5, "point": 0.00001, "pip_size": 0.0001, "spread_points": 12, "spread_pips": 1.2, "min_lot": 0.01, "max_lot": 100.0, "lot_step": 0.01, "stop_level": 0}`
+4. **`GET_CANDLES`**:
+   - Request: `{"action": "GET_CANDLES", "symbol": "EURUSD", "timeframe": "M5", "count": 100}`
+   - Response: `{"status": "OK", "candles": [{"timestamp": 1783680000, "open": 1.0850, "high": 1.0860, "low": 1.0845, "close": 1.0855, "volume": 120}, ...]}`
+5. **`ORDER_SEND`**:
+   - Request: `{"action": "ORDER_SEND", "symbol": "EURUSD", "type": "BUY", "volume": 0.1, "sl": 1.0830, "tp": 1.0890, "deviation": 10, "magic": 100101, "comment": "forex_signals_bot"}`
+   - Response: `{"status": "OK", "ticket": 7891234, "price": 1.0850, "retcode": 10009, "comment": "Done"}`
+6. **`ORDER_CLOSE`**:
+   - Request: `{"action": "ORDER_CLOSE", "ticket": 7891234, "deviation": 10}`
+   - Response: `{"status": "OK", "ticket": 7891234, "retcode": 10009, "comment": "Closed"}`
+7. **`GET_POSITIONS`**:
+   - Request: `{"action": "GET_POSITIONS", "magic": 100101}`
+   - Response: `{"status": "OK", "positions": [{"ticket": 7891234, "symbol": "EURUSD", "type": "BUY", "volume": 0.1, "open_price": 1.0850, "sl": 1.0830, "tp": 1.0890, "profit": 15.0, "magic": 100101}]}`
+
+---
+
+## Component Interfaces & Design
+
+### 1. Unified Broker Protocol
 
 ```python
-class ConsensusEngine:
-    """Determines trade signal from strategy agreement."""
+from typing import Protocol, List, Optional
 
-    def __init__(self, threshold: int = 4):
-        """
-        Args:
-            threshold: Minimum number of strategies that must agree.
-                       Default is 4 out of 5.
-        """
-        self.threshold = threshold
-
-    def evaluate(self, signals: List[StrategySignal]) -> Signal:
-        """
-        Count BUY and SELL signals. If either count >= threshold,
-        return that direction. Otherwise return NEUTRAL.
-
-        Args:
-            signals: List of strategy signals (one per strategy)
-
-        Returns:
-            Signal.BUY, Signal.SELL, or Signal.NEUTRAL
-        """
-        ...
-```
-
-### Order Manager
-
-```python
-class OrderManager:
-    """Creates and manages order lifecycle."""
-
-    def __init__(self, sl_pips: float, tp_pips: float, pip_value: float = 0.0001):
-        ...
-
-    def create_order(self, direction: Signal, entry_price: float, entry_time: datetime) -> Order:
-        """
-        Create an order with calculated SL and TP prices.
-
-        For BUY: SL = entry - sl_pips * pip_value, TP = entry + tp_pips * pip_value
-        For SELL: SL = entry + sl_pips * pip_value, TP = entry - tp_pips * pip_value
-        """
-        ...
-
-    def update_order(self, order: Order, candle: Candle) -> Order:
-        """
-        Check if the given candle triggers SL or TP.
-        Returns updated order (possibly closed).
-        """
-        ...
-```
-
-### Backtest Engine
-
-```python
-class BacktestEngine:
-    """Orchestrates backtesting across historical data."""
-
-    def __init__(
-        self,
-        strategies: List[Strategy],
-        consensus: ConsensusEngine,
-        order_manager: OrderManager,
-    ):
-        ...
-
-    def run(self, candles: List[Candle]) -> BacktestResult:
-        """
-        Process candles sequentially:
-        1. For each candle, generate signals from all strategies
-        2. Evaluate consensus
-        3. If signal and no open position, create order
-        4. Update open orders against current candle
-        5. After all candles, compute metrics
-        """
-        ...
-```
-
-### Metrics Calculator
-
-```python
-class MetricsCalculator:
-    """Pure functions for computing backtest performance metrics."""
-
-    @staticmethod
-    def win_rate(trades: List[Order]) -> float:
-        """Winning trades / total trades. Returns 0.0 if no trades."""
-        ...
-
-    @staticmethod
-    def total_pnl(trades: List[Order]) -> float:
-        """Sum of all trade PnLs."""
-        ...
-
-    @staticmethod
-    def max_drawdown(trades: List[Order]) -> float:
-        """
-        Maximum peak-to-trough decline in cumulative equity.
-        Returns a non-negative value (0 means no drawdown).
-        """
-        ...
-
-    @staticmethod
-    def sharpe_ratio(trades: List[Order], risk_free_rate: float = 0.0) -> float:
-        """
-        (mean_return - risk_free_rate) / std_return.
-        Returns 0.0 if fewer than 2 trades or zero std.
-        """
-        ...
-
-    @staticmethod
-    def profit_factor(trades: List[Order]) -> float:
-        """
-        Gross profit / gross loss. Returns inf if no losing trades,
-        0.0 if no winning trades.
-        """
-        ...
-
-    @staticmethod
-    def avg_trade_duration(trades: List[Order]) -> float:
-        """Average duration in seconds across all closed trades."""
-        ...
-```
-
-### Data Downloader
-
-```python
-class YahooDataDownloader:
-    """Downloads OHLC data from Yahoo Finance."""
-
-    def download(self, pair: str, timeframe: Timeframe,
-                 start: datetime, end: datetime,
-                 csv_output_dir: Optional[str] = None) -> List[Candle]:
-        """
-        Fetch candlestick data from Yahoo Finance.
-
-        Args:
-            pair: Forex pair symbol (e.g., "EURUSD=X")
-            timeframe: Candle timeframe
-            start: Start datetime
-            end: End datetime
-            csv_output_dir: If provided, write the downloaded candles to a CSV
-                             file in this directory (created if missing) instead
-                             of only returning them in memory.
-
-        Returns:
-            List of Candle objects, sorted by timestamp ascending
-        """
-        ...
-
-    def export_to_csv(self, candles: List[Candle], pair: str,
-                       timeframe: Timeframe, start: datetime, end: datetime,
-                       output_dir: str) -> str:
-        """
-        Write candles to a CSV file with columns:
-        timestamp, open, high, low, close, volume.
-
-        The filename is derived from the pair, timeframe, and date range,
-        e.g. `data/EURUSDX_M5_20260601_20260729.csv` (pair symbols are
-        sanitized for filesystem safety, e.g. "=" is stripped).
-
-        Args:
-            candles: Candles to write.
-            pair: Forex pair symbol (used to build the filename).
-            timeframe: Candle timeframe (used to build the filename).
-            start: Range start (used to build the filename).
-            end: Range end (used to build the filename).
-            output_dir: Directory to write the CSV file into.
-
-        Returns:
-            The absolute path of the written CSV file.
-        """
-        ...
-```
-
-### Broker Protocol (Future MT5 Integration)
-
-```python
 class Broker(Protocol):
-    """Abstract broker interface for future live trading."""
+    """Unified broker abstraction supporting live socket and mock execution."""
 
-    def place_order(self, order: Order) -> str:
-        """Place order, return order ID."""
+    def connect(self) -> bool:
+        """Initialize connection to broker."""
         ...
 
-    def get_open_orders(self) -> List[Order]:
+    def disconnect(self) -> None:
+        """Clean shutdown and release socket/resources."""
         ...
 
-    def close_order(self, order_id: str) -> Order:
+    def is_connected(self) -> bool:
+        """Check current connection health via ping."""
+        ...
+
+    def get_account_info(self) -> AccountInfo:
+        """Retrieve real-time account balances and equity."""
+        ...
+
+    def get_symbol_info(self, symbol: str) -> SymbolInfo:
+        """Query symbol specifications (digits, point, spread, lot constraints)."""
+        ...
+
+    def get_candles(self, symbol: str, timeframe: Timeframe, count: int) -> List[Candle]:
+        """Fetch latest candles directly from MT5 chart buffer."""
+        ...
+
+    def place_order(
+        self,
+        symbol: str,
+        direction: Signal,
+        volume: float,
+        sl_price: float,
+        tp_price: float,
+        deviation: int = 10,
+        magic: int = 100101,
+        comment: str = "forex_signals_bot"
+    ) -> TradeExecutionResult:
+        """Dispatch market order via socket bridge."""
+        ...
+
+    def close_position(self, ticket: int, deviation: int = 10) -> TradeExecutionResult:
+        """Close open position by ticket."""
+        ...
+
+    def get_open_positions(self, magic: Optional[int] = None) -> List[Position]:
+        """List active positions filtered by magic number."""
         ...
 ```
 
-## Configuration
+### 2. Socket Broker Client (`SocketBrokerClient`)
+
+- Implements `Broker` using standard Python `socket` module with TCP keepalive and reconnect backoff (1s, 2s, 4s, up to 30s).
+- Serializes and deserializes newline-delimited JSON commands.
+- Thread-safe socket send/recv with configurable timeout (default: 5.0 seconds).
+- Validates responses and converts JSON dicts into strongly-typed dataclasses (`AccountInfo`, `SymbolInfo`, `Position`, `TradeExecutionResult`).
+
+### 3. Mock Broker Client (`MockBrokerClient`)
+
+- Pure Python in-memory broker implementation for offline testing, property testing, and CI pipelines without requiring MT5 to be running.
+- Simulates account balance, order fills, intrabar tick movements, SL/TP triggers, spread checks, and position tracking.
+
+### 4. Live Trading Loop (`LiveTradingEngine` in `src/forex_signals/broker/live_runner.py`)
+
+- Synchronizes execution cycle with bar close intervals (e.g. at the close of every 5-minute candle).
+
+```plantuml
+@startuml Live_Trading_Loop
+!theme plain
+skinparam shadowing false
+skinparam roundcorner 6
+
+start
+:Initialize SocketBrokerClient (Connect to 127.0.0.1:5555);
+:Validate MT5 Terminal & Account Info;
+
+while (Bot Running?) is (true)
+    :Wait for Next Candle Close / Poll Interval;
+    :Fetch Latest Candles (GET_CANDLES);
+    :Execute 5 Strategies (SMI, MA, RSI, MACD, BB);
+    :Evaluate Consensus Engine (>= 4/5 agreement);
+    
+    if (Consensus is BUY or SELL?) then (yes)
+        :Query Open Positions (GET_POSITIONS);
+        
+        if (Opposite Position Open?) then (yes)
+            :Close Existing Position (ORDER_CLOSE);
+        endif
+        
+        if (Same Direction Position Already Open?) then (yes)
+            :Hold Existing Position;
+        else (no)
+            :Query Live Symbol Specs (SYMBOL_INFO);
+            if (Live Spread > max_spread_pips?) then (yes)
+                :Log Spread Warning & Skip Order;
+            else (no)
+                :Quantize Lot Size to lot_step;
+                :Calculate Valid SL/TP (respecting stop_level);
+                :Send Market Order (ORDER_SEND);
+                :Log Trade Execution Ticket & Retcode;
+            endif
+        endif
+    else (no (NEUTRAL))
+        :Log Neutral Consensus State;
+    endif
+endwhile (false)
+
+:Disconnect Socket & Clean Shutdown;
+stop
+
+@enduml
+```
+
+- Cycle steps:
+  1. Fetch latest candles from MT5 via `broker.get_candles(...)`.
+  2. Run 5 technical strategies (`SMI`, `MA`, `RSI`, `MACD`, `Bollinger`).
+  3. Evaluate consensus agreement against threshold (default: 4/5).
+  4. Query current open positions:
+     - If opposite consensus occurs, close existing position.
+     - If consensus matches direction and position already open, maintain position.
+     - If consensus triggers and no open position exists:
+       a. Check spread guardrail: if spread in pips > `max_spread_pips`, skip with warning log.
+       b. Quantize volume to broker `lot_step` within `[min_lot, max_lot]`.
+       c. Calculate SL/TP respecting broker `stop_level`.
+       d. Send order via `broker.place_order(...)` and log ticket.
+  5. Sleep until next candle close or tick polling interval.
+
+---
+
+## Configuration Schema (`config.yaml`)
 
 ```yaml
-# config.yaml
+# General & Market Data Configuration
 pair: "EURUSD=X"
 timeframe: "M5"
-sl_pips: 20
-tp_pips: 40
+sl_pips: 20.0
+tp_pips: 40.0
 consensus_threshold: 4
 
+# Technical Strategy Parameters
 strategies:
   smi:
     period: 14
@@ -455,130 +565,105 @@ strategies:
     period: 20
     std_dev: 2.0
 
+# Historical Backtest Window
 backtest:
-  start_date: "2024-01-01"
-  end_date: "2024-12-31"
+  start_date: "2026-06-01"
+  end_date: "2026-07-29"
 
-# Optional: persist downloaded candles to CSV for reuse/offline analysis.
-# Disabled by default; when enabled, the CLI writes a CSV file named
-# <pair>_<timeframe>_<start>_<end>.csv into output_dir.
+# CSV Data Export Configuration
 csv_export:
   enabled: false
   output_dir: "data"
+
+# Auto-Tuning Configuration
+auto_tune:
+  enabled: false
+  train_split: 0.7
+  consensus_threshold_values: [2, 3, 4, 5]
+  strategy_param_values:
+    moving_average:
+      fast_period: [5, 10, 15]
+      slow_period: [30, 50, 100]
+
+# MetaTrader 5 Live Trading Configuration (Method A: Local TCP Socket Bridge)
+mt5:
+  enabled: false
+  mock: false                         # Set true for offline simulation without MT5
+  host: "127.0.0.1"                  # Localhost IP where MT5 ForexBridge EA is running
+  port: 5555                         # Local port configured in MT5 EA
+  symbol: "EURUSD"                   # MT5 symbol name (e.g. EURUSD, EURUSDm)
+  lot_size: 0.1                      # Trade volume
+  magic_number: 100101               # Magic number identifying bot trades
+  max_spread_pips: 2.5               # Maximum allowable spread filter
+  deviation_points: 10               # Max allowable slippage in points
+  poll_interval_seconds: 5           # Polling interval between candle checks
+  timeout_seconds: 5.0               # Socket request timeout
 ```
-
-## Strategy Details
-
-### SMI (Stochastic Momentum Index)
-- Calculates the distance of close from the midpoint of the high-low range
-- Smoothed with double EMA
-- BUY when SMI crosses above -40 (oversold recovery)
-- SELL when SMI crosses below +40 (overbought reversal)
-- NEUTRAL otherwise
-
-### Moving Average Crossover
-- Fast MA (default 10-period) and Slow MA (default 50-period)
-- BUY when fast crosses above slow (golden cross)
-- SELL when fast crosses below slow (death cross)
-- NEUTRAL when no crossover on current candle
-
-### RSI (Relative Strength Index)
-- Standard 14-period RSI calculation
-- BUY when RSI crosses above oversold level (30)
-- SELL when RSI crosses below overbought level (70)
-- NEUTRAL otherwise
-
-### MACD
-- Standard MACD (12, 26, 9)
-- BUY when MACD line crosses above signal line
-- SELL when MACD line crosses below signal line
-- NEUTRAL when no crossover
-
-### Bollinger Bands
-- 20-period SMA with 2 standard deviation bands
-- BUY when price touches/crosses below lower band and reverses
-- SELL when price touches/crosses above upper band and reverses
-- NEUTRAL otherwise
-
-## Error Handling
-
-- **Insufficient data**: Strategies return NEUTRAL when fewer than `min_candles` are available
-- **Network failures**: Data downloader retries with exponential backoff (3 attempts), raises `DataDownloadError` on failure
-- **Invalid configuration**: Config loader validates all values at startup, raises `ConfigError` with descriptive message
-- **Division by zero in metrics**: Handled gracefully (0.0 for empty trade lists, inf for zero denominators where appropriate)
-- **Yahoo Finance data gaps**: Missing candles are detected and logged; backtester skips gaps rather than interpolating
-- **CSV export failures**: Errors writing the CSV file (e.g. permission or disk errors) are logged as warnings and do not abort the backtest — CSV export is a best-effort side effect, not a pipeline dependency
-
-## Extensibility Points
-
-1. **New strategies**: Implement `Strategy` protocol, register in config
-2. **New pairs**: Add pair to config, downloader handles any Yahoo Finance symbol
-3. **ATR-based SL/TP**: Extend `OrderManager` with `DynamicStopLoss` protocol
-4. **MT5 integration**: Implement `Broker` protocol with MT5 connection
-5. **Weighted consensus**: Extend `ConsensusEngine` with optional weight parameter
 
 ---
 
-## Correctness Properties
-
-*A property is a characteristic or behavior that should hold true across all valid executions of a system — essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+## Correctness Properties & Formal Specifications
 
 ### Property 1: Strategy signal validity
-
-*For any* valid OHLC candle sequence with sufficient length and *for any* of the 5 strategies, the `generate_signal` method SHALL return exactly one of `Signal.BUY`, `Signal.SELL`, or `Signal.NEUTRAL` — never raising an exception or returning an invalid value.
-
-**Validates: Requirements FR2.1, FR2.2, FR2.3, FR2.4, FR2.5**
+*For any* valid OHLC candle sequence with length $\ge \text{min\_candles}$ and *for any* strategy, `generate_signal` SHALL return exactly one of `Signal.BUY`, `Signal.SELL`, or `Signal.NEUTRAL` without raising an exception.
+**Validates: Requirements FR2.1, FR2.2, FR2.3, FR2.4, FR2.5, FR2.6**
 
 ### Property 2: Consensus threshold correctness
-
-*For any* list of 5 strategy signals, the consensus engine SHALL return `Signal.BUY` if and only if at least 4 signals are BUY, SHALL return `Signal.SELL` if and only if at least 4 signals are SELL, and SHALL return `Signal.NEUTRAL` in all other cases.
-
+*For any* list of 5 strategy signals, the consensus engine SHALL return `Signal.BUY` if and only if $\text{count}(\text{BUY}) \ge \text{threshold}$, SHALL return `Signal.SELL` if and only if $\text{count}(\text{SELL}) \ge \text{threshold}$, and SHALL return `Signal.NEUTRAL` in all other cases.
 **Validates: Requirements FR3.2, FR3.3**
 
 ### Property 3: Consensus symmetry (equal weight)
-
-*For any* list of 5 strategy signals and *for any* permutation of those signals, the consensus engine SHALL produce the same result — proving that no strategy position in the list receives preferential treatment.
-
+*For any* list of strategy signals and *for any* permutation of those signals, the consensus engine SHALL produce the exact same output.
 **Validates: Requirements FR3.1**
 
 ### Property 4: Stop-loss and take-profit price calculation
-
-*For any* entry price, *for any* positive SL pip value, and *for any* positive TP pip value: for a BUY order, `stop_loss < entry_price < take_profit`; for a SELL order, `take_profit < entry_price < stop_loss`. Furthermore, the distance from entry to SL SHALL equal `sl_pips * pip_value` and entry to TP SHALL equal `tp_pips * pip_value`.
-
-**Validates: Requirements FR4.2, FR4.3**
+*For any* entry price, positive SL pip value, and positive TP pip value:
+- BUY order: $\text{stop\_loss} < \text{entry\_price} < \text{take\_profit}$
+- SELL order: $\text{take\_profit} < \text{entry\_price} < \text{stop\_loss}$
+- Distance from entry to SL equals $\text{sl\_pips} \times \text{pip\_value}$
+- Distance from entry to TP equals $\text{tp\_pips} \times \text{pip\_value}$
+**Validates: Requirements FR4.2**
 
 ### Property 5: Order lifecycle state machine
-
-*For any* open order and *for any* subsequent candle, the order SHALL close if and only if the candle's price range intersects the SL or TP level. A BUY order closes at SL if `candle.low <= stop_loss` and closes at TP if `candle.high >= take_profit`. A SELL order closes at SL if `candle.high >= stop_loss` and closes at TP if `candle.low <= take_profit`. Once closed, an order's status SHALL never change again.
-
-**Validates: Requirements FR4.4**
+*For any* open order and subsequent candle:
+- BUY closes at SL if $\text{candle.low} \le \text{stop\_loss}$; closes at TP if $\text{candle.high} \ge \text{take\_profit}$.
+- SELL closes at SL if $\text{candle.high} \ge \text{stop\_loss}$; closes at TP if $\text{candle.low} \le \text{take\_profit}$.
+- Once closed, order status SHALL never transition back to open.
+**Validates: Requirements FR4.3**
 
 ### Property 6: Win rate metric correctness
-
-*For any* non-empty list of closed trades with known PnL values, the win rate SHALL equal the count of trades where `pnl > 0` divided by the total number of trades, and SHALL always be in the range [0.0, 1.0].
-
+*For any* non-empty list of closed trades, $\text{win\_rate} = \frac{\text{count}(\text{pnl} > 0)}{\text{total\_trades}} \in [0.0, 1.0]$.
 **Validates: Requirements FR5.2**
 
 ### Property 7: Max drawdown non-negativity and correctness
-
-*For any* sequence of closed trades, the max drawdown SHALL be non-negative. Furthermore, for any equity curve derived from cumulative PnL, the max drawdown SHALL equal the maximum value of `(peak - trough)` where the trough occurs after the peak.
-
-**Validates: Requirements FR5.4**
+*For any* trade sequence, max drawdown SHALL be non-negative and equal $\max(\text{peak} - \text{trough})$ on cumulative equity.
+**Validates: Requirements FR5.2**
 
 ### Property 8: Profit factor correctness
-
-*For any* list of closed trades, the profit factor SHALL equal `sum(pnl for trades where pnl > 0) / abs(sum(pnl for trades where pnl < 0))`. When there are no losing trades, it SHALL return infinity. When there are no winning trades, it SHALL return 0.0.
-
-**Validates: Requirements FR5.6**
+*For any* trade list, $\text{profit\_factor} = \frac{\sum_{\text{pnl}>0} \text{pnl}}{\left|\sum_{\text{pnl}<0} \text{pnl}\right|}$. Returns $\infty$ if no losses, $0.0$ if no wins.
+**Validates: Requirements FR5.2**
 
 ### Property 9: Total PnL additivity
-
-*For any* list of closed trades, the total PnL SHALL equal the sum of individual trade PnLs. Equivalently, for any partition of the trade list into two sublists A and B, `total_pnl(A + B) == total_pnl(A) + total_pnl(B)`.
-
-**Validates: Requirements FR5.3**
+*For any* partition of trades $A$ and $B$, $\text{total\_pnl}(A + B) = \text{total\_pnl}(A) + \text{total\_pnl}(B)$.
+**Validates: Requirements FR5.2**
 
 ### Property 10: Sharpe ratio formula correctness
+*For any* trade returns with $N \ge 2$ and $\sigma > 0$, $\text{Sharpe} = \frac{\mu - r_f}{\sigma}$; otherwise $0.0$.
+**Validates: Requirements FR5.2**
 
-*For any* list of 2 or more trade returns with non-zero standard deviation, the Sharpe ratio SHALL equal `(mean(returns) - risk_free_rate) / std(returns)`. For fewer than 2 trades or zero standard deviation, it SHALL return 0.0.
+### Property 11: MT5 SL/TP distance and minimum stop level compliance
+*For any* MT5 order request, calculated SL and TP price levels SHALL satisfy both the requested pip distance and exceed the broker's minimum `stop_level` distance:
+$$|\text{entry} - \text{SL}| \ge \text{stop\_level\_points} \times \text{point} \quad \text{and} \quad |\text{entry} - \text{TP}| \ge \text{stop\_level\_points} \times \text{point}$$
+**Validates: Requirements FR7.4**
 
-**Validates: Requirements FR5.5**
+### Property 12: MT5 lot size quantization
+*For any* calculated lot size, the executed volume SHALL be clamped to $[\text{min\_lot}, \text{max\_lot}]$ and quantized to an exact multiple of $\text{lot\_step}$.
+**Validates: Requirements FR7.2**
+
+### Property 13: Spread filter order gatekeeping
+*For any* live signal, if $\text{current\_spread\_pips} > \text{max\_spread\_pips}$, the trade request SHALL be rejected and no order shall be dispatched to the broker.
+**Validates: Requirements FR7.6**
+
+### Property 14: MT5 order ticket tracking and bot isolation
+*For any* order dispatched to MT5, it SHALL carry the configured `magic_number`, and only positions matching this `magic_number` SHALL be queried or closed by the bot.
+**Validates: Requirements FR7.4, FR7.5**
