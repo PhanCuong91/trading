@@ -11,7 +11,7 @@ from forex_signals.data.models import Signal
 class BrokerType(Enum):
     """Supported broker connection types."""
 
-    SOCKET = "socket"
+    MT5 = "mt5"
     MOCK = "mock"
 
 

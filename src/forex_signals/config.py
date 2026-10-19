@@ -51,12 +51,14 @@ class AutoTuneConfig:
 
 @dataclass(frozen=True)
 class Mt5Config:
-    """Configuration for MetaTrader 5 live trading via TCP Socket Bridge (Method A)."""
+    """Configuration for MetaTrader 5 live trading via Direct Python module."""
 
     enabled: bool = False
     mock: bool = False
-    host: str = "127.0.0.1"
-    port: int = 5555
+    path: Optional[str] = None
+    login: Optional[int] = None
+    password: Optional[str] = None
+    server: Optional[str] = None
     symbol: str = "EURUSD"
     lot_size: float = 0.1
     magic_number: int = 100101
@@ -64,6 +66,7 @@ class Mt5Config:
     deviation_points: int = 10
     poll_interval_seconds: float = 5.0
     timeout_seconds: float = 5.0
+    timeout_ms: int = 5000
 
 
 @dataclass(frozen=True)
@@ -211,18 +214,6 @@ def _validate_mt5_config(value: Any) -> Mt5Config:
     if not isinstance(mock, bool):
         raise ConfigError(f"mt5.mock must be a boolean, got: {mock!r}")
 
-    host = value.get("host", "127.0.0.1")
-    if not isinstance(host, str) or not host.strip():
-        raise ConfigError("mt5.host must be a non-empty string")
-
-    port = value.get("port", 5555)
-    try:
-        port_int = int(port)
-    except (TypeError, ValueError):
-        raise ConfigError(f"mt5.port must be an integer, got: {port!r}")
-    if not 1 <= port_int <= 65535:
-        raise ConfigError(f"mt5.port must be between 1 and 65535, got: {port_int}")
-
     symbol = value.get("symbol", "EURUSD")
     if not isinstance(symbol, str) or not symbol.strip():
         raise ConfigError("mt5.symbol must be a non-empty string")
@@ -234,11 +225,34 @@ def _validate_mt5_config(value: Any) -> Mt5Config:
     poll_int = _validate_positive_number(value.get("poll_interval_seconds", 5.0), "mt5.poll_interval_seconds")
     timeout = _validate_positive_number(value.get("timeout_seconds", 5.0), "mt5.timeout_seconds")
 
+    path = value.get("path")
+    if path is not None and not isinstance(path, str):
+        raise ConfigError(f"mt5.path must be a string or null, got: {path!r}")
+
+    login = value.get("login")
+    if login is not None:
+        try:
+            login = int(login)
+        except (TypeError, ValueError):
+            raise ConfigError(f"mt5.login must be an integer, got: {login!r}")
+
+    password = value.get("password")
+    if password is not None and not isinstance(password, str):
+        raise ConfigError(f"mt5.password must be a string, got: {password!r}")
+
+    server = value.get("server")
+    if server is not None and not isinstance(server, str):
+        raise ConfigError(f"mt5.server must be a string, got: {server!r}")
+
+    timeout_ms = int(value.get("timeout_ms", 5000))
+
     return Mt5Config(
         enabled=enabled,
         mock=mock,
-        host=host,
-        port=port_int,
+        path=path,
+        login=login,
+        password=password,
+        server=server,
         symbol=symbol,
         lot_size=lot_size,
         magic_number=magic,
@@ -246,6 +260,7 @@ def _validate_mt5_config(value: Any) -> Mt5Config:
         deviation_points=deviation,
         poll_interval_seconds=poll_int,
         timeout_seconds=timeout,
+        timeout_ms=timeout_ms,
     )
 
 

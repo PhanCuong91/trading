@@ -5,7 +5,7 @@ A modular, production-ready Python algorithmic trading application that download
 The system supports:
 1. **Historical Backtesting** — bar-by-bar trade simulation, intrabar SL/TP evaluation, and performance metrics (Sharpe ratio, max drawdown, win rate, profit factor).
 2. **Strategy Auto-Tuning** — grid search optimization over consensus thresholds and strategy parameters with training splits and incremental CSV logging.
-3. **Live & Demo Trading via MetaTrader 5 (MT5)** — automated live execution on macOS and Windows using a **Local TCP Socket Bridge (Method A)** or an in-memory **Mock Broker** for offline simulation.
+3. **Live & Demo Trading via MetaTrader 5 (MT5)** — automated live execution using the official **`MetaTrader5` Python Module** on Ubuntu Raspberry Pi 5 (ARM64 via Box64/Wine64 headless setup), Windows, and Linux, or an in-memory **Mock Broker** for offline simulation.
 
 ```plantuml
 @startuml
@@ -35,7 +35,7 @@ package "Risk & Execution" {
   [Backtest Engine] as Backtest
   [Live Trading Engine] as LiveEngine
   [Mock Broker Client] as MockBroker
-  [Socket Broker Client] as SocketBroker
+  [MT5 Direct Broker Client] as MT5Broker
 }
 
 DataSource --> DataBuffer
@@ -58,7 +58,7 @@ OrderMgr --> Backtest : Simulated Orders & SL/TP
 OrderMgr --> LiveEngine : Risk Checks & Lot Sizing
 
 LiveEngine --> MockBroker : Offline Simulation
-LiveEngine --> SocketBroker : TCP Port 5555
+LiveEngine --> MT5Broker : Direct MetaTrader5 Module IPC
 @enduml
 ```
 
@@ -88,9 +88,9 @@ LiveEngine --> SocketBroker : TCP Port 5555
   - Bar-by-bar historical simulation with intrabar high/low fill validation.
   - Metrics: Total/Net P&L, Win Rate, Max Drawdown, Sharpe Ratio, Profit Factor, Average Trade Duration.
   - Grid search auto-tuning with train/validation splitting, resume caching, and progress reporting.
-- **MetaTrader 5 Live Trading (Method A: Local TCP Socket Bridge)**:
-  - Native macOS Python execution connecting via TCP (`127.0.0.1:5555`) to MT5 running on macOS (or Windows) with `ForexBridge.mq5`.
-  - Zero Wine CLI friction for Python commands.
+- **MetaTrader 5 Live Trading (Direct Python Module)**:
+  - Official `MetaTrader5` Python module API integration (`import MetaTrader5 as mt5`) supporting Ubuntu on Raspberry Pi 5 (ARM64 via Box64/Wine64 headless execution) and Windows/Linux.
+  - Native Python order management, tick/rate streaming, position querying, and safety guardrails.
   - Full position lifecycle tracking, magic number isolation, and automated exits on opposite consensus signals.
 
 ---
@@ -195,19 +195,22 @@ auto_tune:
       fast_period: [5, 10]
       slow_period: [20, 50]
 
-# MetaTrader 5 Live Trading (Method A: Local TCP Socket Bridge)
+# MetaTrader 5 Live Trading (Direct Python Module)
 mt5:
   enabled: false
   mock: false                         # Set true for offline simulation without MT5
-  host: "127.0.0.1"                  # Host where MT5 ForexBridge.mq5 is running
-  port: 5555                         # Port configured in ForexBridge.mq5 EA
+  path: ""                            # Optional path to terminal64.exe (e.g. Wine on Pi 5)
+  login: null                         # MT5 account login number (optional if logged in)
+  password: ""                        # MT5 account password
+  server: ""                          # MT5 broker server name
   symbol: "EURUSD"                   # MT5 symbol name
   lot_size: 0.1                      # Order volume in lots
   magic_number: 100101               # Magic number identifying bot trades
   max_spread_pips: 2.5               # Maximum allowable spread filter (pips)
   deviation_points: 10               # Slippage deviation in points
   poll_interval_seconds: 5           # Polling frequency in seconds
-  timeout_seconds: 5.0               # Socket request timeout
+  timeout_seconds: 5.0               # Timeout in seconds
+  timeout_ms: 5000                   # MT5 initialization timeout in milliseconds
 ```
 
 ### Configuration Reference
@@ -223,8 +226,9 @@ mt5:
 | `csv_export.enabled` | `bool` | `true` | Export downloaded candle data to local CSV |
 | `auto_tune.enabled` | `bool` | `false` | Enable grid search auto-tuning |
 | `auto_tune.train_split` | `float` | `0.7` | In-sample training partition ratio |
-| `mt5.mock` | `bool` | `false` | Use in-memory mock broker instead of live MT5 socket |
-| `mt5.host` / `mt5.port` | `string` / `int` | `127.0.0.1` / `5555` | Local TCP address of `ForexBridge.mq5` EA |
+| `mt5.mock` | `bool` | `false` | Use in-memory mock broker instead of live MT5 |
+| `mt5.path` | `string` | `""` | Optional executable path to MT5 `terminal64.exe` |
+| `mt5.login` / `mt5.password` / `mt5.server` | `int` / `str` / `str` | `null` | MT5 broker account credentials |
 | `mt5.symbol` | `string` | `EURUSD` | Symbol name traded in MetaTrader 5 |
 | `mt5.lot_size` | `float` | `0.1` | Order lot size |
 | `mt5.magic_number` | `int` | `100101` | Magic number to isolate bot orders from manual trades |
@@ -295,9 +299,9 @@ The auto-tuner tests candidate combinations on the training window, logs results
 
 ---
 
-### 3. Live Trading with MetaTrader 5 on macOS (Method A)
+### 3. Live Trading with MetaTrader 5 (Direct Python Module)
 
-Run live or demo automated trading against your MetaTrader 5 terminal:
+Run live or demo automated trading directly against your MetaTrader 5 terminal:
 
 ```plantuml
 @startuml
@@ -306,58 +310,47 @@ skinparam shadowing false
 skinparam defaultFontName Helvetica
 skinparam defaultFontSize 12
 
-box "Native macOS Environment" #AliceBlue
+box "Application Environment (Ubuntu Pi 5 / Windows / Linux)" #AliceBlue
   participant "LiveTradingEngine\n(forex-signals live)" as Engine
-  participant "SocketBrokerClient\n(Python socket)" as Client
-end box
-
-box "MT5 Wine Environment" #Lavender
-  participant "ForexBridge.mq5\n(TCP Server :5555)" as EA
-  participant "MetaTrader 5 Terminal\n(Broker Gateway)" as MT5
+  participant "MT5BrokerClient\n(MetaTrader5 module)" as Client
+  participant "MetaTrader 5 Terminal\n(terminal64.exe)" as MT5
 end box
 
 Engine -> Client: connect()
-Client -> EA: TCP Connect (127.0.0.1:5555)
-Client -> EA: {"action":"PING"}\n
-EA --> Client: {"status":"OK"}\n
+Client -> MT5: mt5.initialize(path, login, password, server)
+MT5 --> Client: True (Terminal Connected)
 
 loop Every Poll Interval (e.g. 5s)
   Engine -> Client: get_symbol_info("EURUSD")
-  Client -> EA: {"action":"SYMBOL_INFO", "symbol":"EURUSD"}\n
-  EA --> Client: {"status":"OK", "spread_pips":1.2, ...}\n
+  Client -> MT5: mt5.symbol_info("EURUSD")
+  MT5 --> Client: SymbolInfo(spread_pips=1.2, digits=5, ...)
 
   Engine -> Client: get_candles("EURUSD", M5, 50)
-  Client -> EA: {"action":"GET_CANDLES", ...}\n
-  EA --> Client: {"status":"OK", "candles":[...]}\n
+  Client -> MT5: mt5.copy_rates_from_pos("EURUSD", TIMEFRAME_M5, 0, 50)
+  MT5 --> Client: List[Candle]
 
   alt Consensus BUY/SELL Triggered & Spread OK
     Engine -> Client: place_order("EURUSD", BUY, 0.1, SL, TP)
-    Client -> EA: {"action":"ORDER_SEND", "type":"BUY", "volume":0.1, ...}\n
-    EA -> MT5: CTrade.Buy(0.1, SL, TP)
-    MT5 --> EA: Order Execution Done (Ticket #7891234)
-    EA --> Client: {"status":"OK", "ticket":7891234, ...}\n
-    Client --> Engine: TradeExecutionResult(success=True)
+    Client -> MT5: mt5.order_send(request)
+    MT5 --> Client: Order Execution Done (Ticket #7891234)
+    Client --> Engine: TradeExecutionResult(success=True, ticket=7891234)
   end
 end
 @enduml
 ```
 
-#### Step 1: Install MetaTrader 5 on Mac
-Download and install MT5 for Mac from your broker or [MetaQuotes](https://www.metatrader5.com/en/download).
-
-#### Step 2: Install `ForexBridge.mq5` Expert Advisor
-1. In MT5 on Mac, click **File** -> **Open Data Folder**.
-2. Open `MQL5/Experts/` and copy [`scripts/mt5/ForexBridge.mq5`](scripts/mt5/ForexBridge.mq5) into this folder.
-3. Open the Navigator panel (`Cmd+N` or `Ctrl+N`), right-click **Expert Advisors** -> **Refresh**.
-4. Drag `ForexBridge` onto any active chart (e.g. `EURUSD`).
-5. Ensure **Allow Algo Trading** is enabled in the MT5 top toolbar and in the EA Properties dialog.
-
-#### Step 3: Run Live Trading Command
+#### Step 1: Run Live Trading Command
 
 Connect to the live MT5 terminal:
 
 ```bash
 forex-signals live --config config.yaml --pair EURUSD --lot-size 0.1
+```
+
+Or specify connection credentials directly via CLI flags:
+
+```bash
+forex-signals live --login 12345678 --password "your_password" --server "Broker-Live" --pair EURUSD --lot-size 0.1
 ```
 
 Run an offline mock simulation (no MT5 required):
@@ -372,8 +365,11 @@ forex-signals live --mock --pair EURUSD --lot-size 0.1
 | :--- | :--- |
 | `--config` | Path to alternate YAML config file |
 | `--pair` / `--symbol` | Trading symbol (e.g. `EURUSD`) |
-| `--mock` / `--no-mock` | Run in-memory mock broker vs live MT5 socket bridge |
-| `--host` / `--port` | MT5 socket bridge address (default: `127.0.0.1:5555`) |
+| `--mock` / `--no-mock` | Run in-memory mock broker vs live MT5 terminal |
+| `--path` | Path to MT5 `terminal64.exe` executable |
+| `--login` | MT5 account login number |
+| `--password` | MT5 account password |
+| `--server` | MT5 broker server name |
 | `--lot-size` | Order volume in lots |
 | `--magic-number` | Bot magic number identifier |
 | `--max-spread` | Maximum allowable spread filter (pips) |
@@ -387,12 +383,9 @@ forex-signals live --mock --pair EURUSD --lot-size 0.1
 ```
 trading/
 ├── pyproject.toml                     # Package metadata, dependencies, entry points
-├── config.yaml                        # Default configuration & MT5 socket settings
+├── config.yaml                        # Default configuration & MT5 settings
 ├── requirements.md                    # Requirements specification
 ├── README.md                          # Project documentation
-├── scripts/
-│   └── mt5/
-│       └── ForexBridge.mq5            # MQL5 Expert Advisor socket server (Method A)
 ├── src/
 │   └── forex_signals/
 │       ├── __init__.py
@@ -426,7 +419,7 @@ trading/
 │           ├── __init__.py
 │           ├── base.py                # Unified Broker protocol
 │           ├── models.py              # AccountInfo, SymbolInfo, Position, TradeExecutionResult
-│           ├── socket_client.py       # TCP socket client for macOS MT5 (Method A)
+│           ├── mt5_client.py          # Direct MT5 client using MetaTrader5 module
 │           ├── live_runner.py         # Live trading execution loop & risk controls
 │           └── mock.py                # Mock broker for offline simulation & CI
 └── tests/
@@ -436,7 +429,7 @@ trading/
     ├── test_orders/                   # Order creation & SL/TP calculation tests
     ├── test_backtest/                 # Backtesting & auto-tuner tests
     ├── test_metrics/                  # Performance metric formula accuracy tests
-    ├── test_broker/                   # Socket client, mock broker & property tests
+    ├── test_broker/                   # MT5 client, mock broker & property tests
     ├── test_data/                     # Downloader & CSV export tests
     ├── test_config/                   # Config validation tests
     └── test_cli/                      # CLI integration tests
@@ -446,7 +439,7 @@ trading/
 
 ## Testing
 
-Run the full test suite (280+ unit, integration, and property-based tests):
+Run the full test suite (290+ unit, integration, and property-based tests):
 
 ```bash
 pytest
@@ -455,7 +448,7 @@ pytest
 Run specific test modules:
 
 ```bash
-# Run broker tests (models, socket client, mock broker, live runner)
+# Run broker tests (models, MT5 client, mock broker, live runner)
 pytest tests/test_broker/ -v
 
 # Run Hypothesis property-based tests (Properties 11-14)
@@ -471,3 +464,12 @@ pytest tests/test_strategies/ -v
 
 - **Add a new strategy**: Implement the `Strategy` protocol in [`src/forex_signals/strategies/base.py`](src/forex_signals/strategies/base.py) (`name`, `generate_signal(candles)`, `min_candles`), register the factory in `_build_strategies()` in [`src/forex_signals/cli.py`](src/forex_signals/cli.py), and define default parameters in [`config.yaml`](config.yaml).
 - **Custom Broker Connector**: Implement the `Broker` protocol in [`src/forex_signals/broker/base.py`](src/forex_signals/broker/base.py) to support alternative broker platforms (e.g. cTrader, Interactive Brokers, FIX API).
+
+---
+
+## Operational Guide & Autonomous Execution
+
+For detailed operational timing rules (market sessions, rollover pauses), background execution (`tmux`, macOS `launchd` daemon), risk safeguards (news filter, circuit breakers), and VPS hosting recommendations, refer to:
+
+👉 **[consideration.md](consideration.md)**
+

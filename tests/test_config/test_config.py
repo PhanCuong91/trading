@@ -332,3 +332,50 @@ class TestCsvExportConfig:
         )
         assert config.csv_export.enabled is False
         assert config.csv_export.output_dir == "custom_dir"
+
+
+class TestMt5Config:
+    """Tests for MT5 configuration parsing and validation."""
+
+    def test_default_mt5_config(self, config_file):
+        config = load_config(config_path=config_file)
+        assert config.mt5.enabled is False
+        assert config.mt5.mock is False
+        assert config.mt5.symbol == "EURUSD"
+        assert config.mt5.lot_size == 0.1
+        assert config.mt5.magic_number == 100101
+        assert config.mt5.max_spread_pips == 2.5
+
+    def test_custom_mt5_config(self, valid_config_data, tmp_path):
+        valid_config_data["mt5"] = {
+            "enabled": True,
+            "mock": True,
+            "path": "/opt/mt5/terminal64.exe",
+            "login": 123456,
+            "password": "secret",
+            "server": "Demo-Server",
+            "symbol": "GBPUSD",
+            "lot_size": 0.2,
+            "magic_number": 200200,
+            "max_spread_pips": 3.0,
+            "deviation_points": 15,
+            "poll_interval_seconds": 10.0,
+            "timeout_seconds": 10.0,
+            "timeout_ms": 10000,
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(valid_config_data, f)
+        config = load_config(config_path=str(path))
+        assert config.mt5.enabled is True
+        assert config.mt5.mock is True
+        assert config.mt5.path == "/opt/mt5/terminal64.exe"
+        assert config.mt5.login == 123456
+        assert config.mt5.password == "secret"
+        assert config.mt5.server == "Demo-Server"
+        assert config.mt5.symbol == "GBPUSD"
+        assert config.mt5.lot_size == 0.2
+        assert config.mt5.magic_number == 200200
+        assert config.mt5.max_spread_pips == 3.0
+        assert config.mt5.deviation_points == 15
+        assert config.mt5.timeout_ms == 10000

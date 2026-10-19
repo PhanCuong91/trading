@@ -322,9 +322,11 @@ def backtest(
 @main.command()
 @click.option("--config", "config_path", default=None, help="Path to YAML config file.")
 @click.option("--pair", "--symbol", "symbol", default=None, help="Forex pair / symbol (e.g. EURUSD).")
-@click.option("--mock/--no-mock", "mock", default=None, help="Use mock broker instead of live MT5 socket bridge.")
-@click.option("--host", default=None, help="MT5 socket bridge host (default: 127.0.0.1).")
-@click.option("--port", type=int, default=None, help="MT5 socket bridge port (default: 5555).")
+@click.option("--mock/--no-mock", "mock", default=None, help="Use mock broker instead of live MT5 terminal.")
+@click.option("--path", default=None, help="Path to MT5 terminal64.exe executable.")
+@click.option("--login", type=int, default=None, help="MT5 account login number.")
+@click.option("--password", default=None, help="MT5 account password.")
+@click.option("--server", default=None, help="MT5 broker server name.")
 @click.option("--lot-size", type=float, default=None, help="Order lot size (e.g. 0.1).")
 @click.option("--magic-number", type=int, default=None, help="Magic number for bot orders.")
 @click.option("--max-spread", type=float, default=None, help="Max allowable spread in pips.")
@@ -334,15 +336,17 @@ def live(
     config_path: Optional[str],
     symbol: Optional[str],
     mock: Optional[bool],
-    host: Optional[str],
-    port: Optional[int],
+    path: Optional[str],
+    login: Optional[int],
+    password: Optional[str],
+    server: Optional[str],
     lot_size: Optional[float],
     magic_number: Optional[int],
     max_spread: Optional[float],
     poll_interval: Optional[float],
     max_iterations: Optional[int],
 ) -> None:
-    """Run live trading via MT5 Local TCP Socket Bridge (Method A) or Mock."""
+    """Run live trading via MetaTrader 5 Direct Python module or Mock."""
     try:
         config = load_config(config_path=config_path)
     except ConfigError as e:
@@ -351,8 +355,10 @@ def live(
 
     # Determine runtime options
     is_mock = mock if mock is not None else config.mt5.mock
-    broker_host = host or config.mt5.host
-    broker_port = port or config.mt5.port
+    mt5_path = path or config.mt5.path
+    mt5_login = login if login is not None else config.mt5.login
+    mt5_password = password or config.mt5.password
+    mt5_server = server or config.mt5.server
     trade_symbol = symbol or config.mt5.symbol
     trade_lot = lot_size if lot_size is not None else config.mt5.lot_size
     bot_magic = magic_number if magic_number is not None else config.mt5.magic_number
@@ -366,16 +372,15 @@ def live(
         click.echo("Starting live trading engine with MOCK broker simulation...")
         broker = MockBrokerClient()
     else:
-        from forex_signals.broker.socket_client import SocketBrokerClient
+        from forex_signals.broker.mt5_client import MT5BrokerClient
 
-        click.echo(
-            f"Connecting to MT5 Socket Bridge at {broker_host}:{broker_port} "
-            f"for symbol {trade_symbol}..."
-        )
-        broker = SocketBrokerClient(
-            host=broker_host,
-            port=broker_port,
-            timeout=config.mt5.timeout_seconds,
+        click.echo(f"Connecting to MetaTrader 5 terminal for symbol {trade_symbol}...")
+        broker = MT5BrokerClient(
+            path=mt5_path,
+            login=mt5_login,
+            password=mt5_password,
+            server=mt5_server,
+            timeout=config.mt5.timeout_ms,
         )
 
     try:

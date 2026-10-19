@@ -2,9 +2,9 @@
 
 ## Overview
 
-Build a Python forex trading signal system supporting both historical backtesting (with automated strategy auto-tuning) and live/demo trading integration via MetaTrader 5 on macOS using **Method A: Local TCP Socket Bridge**.
+Build a Python forex trading signal system supporting both historical backtesting (with automated strategy auto-tuning) and live/demo trading integration via MetaTrader 5 using the **Direct `MetaTrader5` Python Module** (`import MetaTrader5 as mt5`), configured for execution on Ubuntu Raspberry Pi 5 (ARM64 via Box64/Wine64 headless environment), Windows, and Linux.
 
-The pipeline architecture is: Market Data (Yahoo/MT5 Socket) → Strategy Engine (5 strategies) → Consensus Engine (4/5 voting) → Order Manager / Risk Engine → Backtest Engine / Socket MT5 Broker Execution.
+The pipeline architecture is: Market Data (Yahoo/MT5 Direct) → Strategy Engine (5 strategies) → Consensus Engine (4/5 voting) → Order Manager / Risk Engine → Backtest Engine / Direct MT5 Broker Execution.
 
 ---
 
@@ -215,24 +215,27 @@ The pipeline architecture is: Market Data (Yahoo/MT5 Socket) → Strategy Engine
     - Test grid generation, train splitting, CSV incremental persistence, resume skip logic, and best candidate selection
     - _Requirements: FR6, FR8.3_
 
-- [x] 8. Implement MetaTrader 5 live trading via Local TCP Socket Bridge (Method A)
+- [x] 8. Implement MetaTrader 5 live trading via Direct Python Module (`MetaTrader5`)
   - [x] 8.1 Define Broker protocol and MT5 data models
     - Create `src/forex_signals/broker/base.py` defining `Broker` Protocol (`connect`, `disconnect`, `is_connected`, `get_account_info`, `get_symbol_info`, `get_candles`, `place_order`, `close_position`, `get_open_positions`)
     - Create `src/forex_signals/broker/models.py` with `AccountInfo`, `SymbolInfo`, `Position`, `TradeExecutionResult`, `BrokerType`
     - _Requirements: FR7.1, FR7.2, NFR1_
 
-  - [x] 8.2 Create MQL5 Expert Advisor script (`ForexBridge.mq5`)
-    - Create `scripts/mt5/ForexBridge.mq5` script running inside MT5 on Mac
-    - Open TCP server socket on `127.0.0.1:<port>` (default: 5555)
-    - Implement command handlers for `PING`, `ACCOUNT_INFO`, `SYMBOL_INFO`, `GET_CANDLES`, `ORDER_SEND`, `ORDER_CLOSE`, `GET_POSITIONS`
-    - Serialize responses in newline-delimited JSON
-    - _Requirements: FR7.1, FR7.2, FR7.3, FR7.4, FR7.5_
+  - [x] 8.2 Implement `MT5BrokerClient` in Python using `MetaTrader5` module
+    - Create `src/forex_signals/broker/mt5_client.py` wrapping the `MetaTrader5` package
+    - Implement `connect()` with `mt5.initialize(path=..., login=..., password=..., server=..., timeout=...)`
+    - Implement `disconnect()` with `mt5.shutdown()` and `is_connected()` with `mt5.terminal_info()`
+    - Implement `get_account_info()` using `mt5.account_info()`
+    - Implement `get_symbol_info()` using `mt5.symbol_info()` and `mt5.symbol_select()`
+    - Implement `get_candles()` using `mt5.copy_rates_from_pos()` mapped to `List[Candle]`
+    - Implement `place_order()` using `mt5.order_send()` with `TRADE_ACTION_DEAL`
+    - Implement `close_position()` and `get_open_positions()` using `mt5.positions_get()` and `mt5.order_send()`
+    - _Requirements: FR7.1, FR7.2, FR7.3, FR7.4, FR7.5, NFR2, NFR4, NFR6_
 
-  - [x] 8.3 Implement `SocketBrokerClient` in Python
-    - Create `src/forex_signals/broker/socket_client.py` connecting via standard TCP socket to `127.0.0.1:5555`
-    - Implement JSON request serialization, response parsing, and error code handling
-    - Implement automatic reconnection with exponential backoff on connection drops
-    - _Requirements: FR7.1, NFR2, NFR4, NFR6_
+  - [x] 8.3 Configure Ubuntu Raspberry Pi 5 & Headless Execution Support
+    - Support terminal executable path configuration (for Box64/Wine64 on Ubuntu Raspberry Pi 5)
+    - Ensure headless execution compatibility (Xvfb / systemd service support)
+    - _Requirements: FR7.7, NFR2_
 
   - [x] 8.4 Implement `MockBrokerClient` for offline testing & CI
     - Create `src/forex_signals/broker/mock.py` simulating broker execution in pure Python
@@ -259,10 +262,10 @@ The pipeline architecture is: Market Data (Yahoo/MT5 Socket) → Strategy Engine
     - **Property 13: Spread filter order gatekeeping** (_Validates: FR7.6_)
     - **Property 14: MT5 order ticket tracking and bot isolation** (_Validates: FR7.4, FR7.5_)
 
-  - [x] 8.8 Write unit and integration tests for socket client and mock broker
-    - Test `SocketBrokerClient` request/response framing with a mock TCP server
+  - [x] 8.8 Write unit and integration tests for MT5 direct client and mock broker
+    - Test `MT5BrokerClient` with mocked `MetaTrader5` module responses
     - Test `MockBrokerClient` order placement, position query, and closing
-    - Test spread filter rejection, stop-level validation, and reconnection backoff
+    - Test spread filter rejection, stop-level validation, and error logging
     - _Requirements: FR7, FR8.4_
 
 - [x] 9. CLI integration & wiring
@@ -271,8 +274,8 @@ The pipeline architecture is: Market Data (Yahoo/MT5 Socket) → Strategy Engine
     - _Requirements: FR1, FR2, FR3, FR4, FR5, FR6, NFR3_
 
   - [x] 9.2 Implement `live` CLI command for MT5 execution
-    - Add `forex-signals live` CLI command with options: `--host`, `--port`, `--mock/--no-mock`, `--pair`, `--lot-size`, `--magic-number`, `--max-spread`
-    - Connect to socket bridge or mock broker, run live loop, handle graceful Ctrl+C shutdown
+    - Add `forex-signals live` CLI command with options: `--path`, `--login`, `--password`, `--server`, `--mock/--no-mock`, `--pair`, `--lot-size`, `--magic-number`, `--max-spread`
+    - Initialize MT5 client or mock broker, run live loop, handle graceful Ctrl+C shutdown (`mt5.shutdown()`)
     - _Requirements: FR7, NFR2, NFR3_
 
 - [x] 10. Final Verification & Checkpoint
@@ -286,7 +289,7 @@ The pipeline architecture is: Market Data (Yahoo/MT5 Socket) → Strategy Engine
 
 - Tasks marked with `*` are property-based tests validating formal correctness properties from the design document.
 - Checkpoints ensure incremental validation.
-- **Method A (Local TCP Socket Bridge)** allows running native macOS Python code communicating with MT5 on Mac over `127.0.0.1:5555` with zero Wine command friction.
+- **Direct Python MT5 Module**: Allows executing Python code interacting directly with the MetaTrader 5 terminal via the official `MetaTrader5` module (`import MetaTrader5 as mt5`), operable on Ubuntu Raspberry Pi 5 under Box64 + Wine64 / headless container or natively on Windows/Linux.
 
 ---
 

@@ -6,7 +6,7 @@ The Forex Trading Signal System is a modular Python application designed for alg
 
 The system downloads market data, evaluates 5 independent technical analysis strategies, and generates trade signals when a configurable consensus (default: 4 out of 5 strategies) agree on market direction. Orders include configurable stop-loss and take-profit levels.
 
-For live trading on macOS, the system employs a **Local TCP Socket Bridge (Method A)** connecting native macOS Python to MetaTrader 5 running on Mac via a lightweight MQL5 Expert Advisor (`ForexBridge.mq5`). The system also supports local backtesting with automated parameter tuning, comprehensive performance analytics, and a built-in mock broker for offline testing.
+For live trading, the system directly interfaces with MetaTrader 5 via the official `MetaTrader5` Python module (`mt5.initialize()`, `mt5.order_send()`, `mt5.copy_rates_from_pos()`), configured to run on Ubuntu on Raspberry Pi 5 (ARM64 via Box64/Wine64 headless environment), Windows, and Linux. The system also supports local backtesting with automated parameter tuning, comprehensive performance analytics, and a built-in mock broker for offline testing.
 
 ---
 
@@ -116,49 +116,57 @@ The system includes 5 standalone technical indicator strategies conforming to a 
 - **FR6.6 Final Execution**:
   - Automatically select the best-performing configuration and execute the final backtest with winning parameters.
 
-### FR7: MetaTrader 5 (MT5) Live Trading via Local TCP Socket Bridge (macOS Native)
+### FR7: MetaTrader 5 (MT5) Live Trading via Direct Python Module (`MetaTrader5`)
 
-- **FR7.1 Local TCP Socket Bridge Architecture (Method A)**:
-  - Provide an MQL5 Expert Advisor script (`ForexBridge.mq5`) running inside MT5 on macOS (or Windows) that starts a local TCP server on `127.0.0.1:<port>` (default: `5555`).
-  - Native macOS Python client connects via standard TCP sockets and exchanges structured JSON requests and responses.
-  - Heartbeat / ping mechanism with automatic reconnection and exponential backoff if the socket connection drops.
-- **FR7.2 Symbol & Account Synchronization via Socket**:
-  - Query real-time account info (`ACCOUNT_INFO`): balance, equity, margin, free margin, currency, leverage.
-  - Query symbol specification (`SYMBOL_INFO`): broker symbol name (e.g., `EURUSD`, `EURUSDm`), digits, point value, spread in pips, minimum/maximum lot size, lot step, and minimum stop level (`stoplevel`).
-- **FR7.3 Live Market Data Streaming**:
-  - Query historical and live candles (`GET_CANDLES`) directly from the MT5 chart buffer.
-  - Maintain synchronized in-memory candle series aligned with candle completion intervals.
-- **FR7.4 Live Order Execution & SL/TP Enforcement**:
-  - Send market order requests (`ORDER_SEND`) with action (`BUY` / `SELL`), volume, symbol, calculated stop-loss, and take-profit.
-  - Ensure SL and TP prices strictly respect broker digits and minimum stop level distance (`stoplevel`).
-  - Apply slippage deviation in points.
+- **FR7.1 Direct Python Module Connection & Lifecycle**:
+  - Direct integration and communication using the official `MetaTrader5` Python module (`import MetaTrader5 as mt5`).
+  - Support configurable terminal connection parameters: terminal executable `path`, account `login`, `password`, `server`, and initialization `timeout` via `mt5.initialize()`.
+  - Handle clean shutdown via `mt5.shutdown()` on application exit or SIGINT/SIGTERM signals.
+  - Connection health checks via `mt5.terminal_info()` with automatic reconnection logic if the connection is interrupted.
+- **FR7.2 Symbol & Account Synchronization**:
+  - Query real-time account status using `mt5.account_info()`: balance, equity, margin, free margin, currency, and leverage.
+  - Query symbol specification via `mt5.symbol_info()` and `mt5.symbol_info_tick()`: broker symbol name (e.g., `EURUSD`, `EURUSDm`), digits, point value, spread in pips/points, minimum/maximum lot size, lot step, and minimum stop level distance (`stoplevel` / `trade_stops_level`).
+  - Automatically verify and activate symbol in Market Watch via `mt5.symbol_select(symbol, True)`.
+- **FR7.3 Live Market Data Retrieval**:
+  - Fetch historical and live candlestick data directly using `mt5.copy_rates_from_pos()` or `mt5.copy_rates_range()`.
+  - Transform MT5 rate structures (time, open, high, low, close, tick_volume, spread) into standardized application `Candle` data models.
+  - Synchronize data polling to timeframe bar completion intervals.
+- **FR7.4 Direct Live Order Execution & SL/TP Enforcement**:
+  - Dispatch market orders using `mt5.order_send()` with structured `MqlTradeRequest` (`TRADE_ACTION_DEAL`, `ORDER_TYPE_BUY` / `ORDER_TYPE_SELL`, volume, price, stoploss, takeprofit, deviation, magic number, comment).
+  - Enforce SL/TP distance compliance strictly respecting broker digits and minimum stop level (`stoplevel`).
+  - Apply slippage deviation in points (`deviation`).
   - Tag orders with unique `magic_number` (e.g., `100101`) and custom comment for complete bot isolation.
+  - Verify trade return codes (`retcode == 10009` for `TRADE_RETCODE_DONE`) and log execution results.
 - **FR7.5 Live Position Tracking & Management**:
-  - Query open positions (`GET_POSITIONS`) filtered by bot `magic_number`.
-  - Send position close requests (`ORDER_CLOSE`) upon opposite consensus signals, SL/TP execution, or manual stop.
-  - Real-time logging of execution status and broker return codes (e.g. `10009` for `TRADE_RETCODE_DONE`).
+  - Query open positions using `mt5.positions_get(symbol=..., magic=...)`.
+  - Send position close requests via `mt5.order_send()` with opposite action (`TRADE_ACTION_DEAL`, closing order type) upon opposite consensus signals, SL/TP execution, or manual stop.
+  - Real-time tracking and logging of trade tickets, P&L, and detailed broker return codes / error logs (`mt5.last_error()`).
 - **FR7.6 Risk Safeguards & Safety Controls**:
-  - Spread filter: reject order dispatch if live spread exceeds `max_spread_pips`.
-  - Margin & balance verification before order placement.
-  - Built-in Mock Broker Client for offline development, tests, and CI without requiring an active MT5 terminal.
+  - Spread filter: compare current live spread against `max_spread_pips` and reject order dispatch if spread is excessive.
+  - Margin & balance verification prior to order placement.
+  - Built-in Mock Broker Client conforming to the same interface for offline development, unit tests, and CI without requiring an active MT5 terminal or Wine setup.
+- **FR7.7 Ubuntu Raspberry Pi 5 Deployment & Headless Execution**:
+  - Support execution on Ubuntu on Raspberry Pi 5 (ARM64) running the MT5 terminal and Python environment via Box64 + Wine64 or containerized headless virtual desktop (Xvfb).
+  - Low CPU and memory footprint optimized for continuous 24/7 execution on Raspberry Pi 5 (4GB / 8GB RAM).
+  - Support execution as a background system service (e.g. systemd service) with structured logging.
 
 ### FR8: Automated Testing & Validation
 
 - **FR8.1 Strategy Unit Tests**: Unit tests for all 5 strategies covering standard patterns, boundary conditions, flat prices, and insufficient candle buffers.
 - **FR8.2 Consensus Engine Integration Tests**: Verify consensus thresholds, tie conditions, and neutral signals.
 - **FR8.3 Backtest Result Validation**: Regression tests verifying metric calculation accuracy (Sharpe, Drawdown, Win Rate, Profit Factor).
-- **FR8.4 Broker Socket & Mock Bridge Tests**: Unit and integration tests with mocked TCP socket and Mock Broker verifying connection lifecycle, message framing, order placement, error codes, and position tracking.
+- **FR8.4 Broker Client & Mock Bridge Tests**: Unit and integration tests with mocked `MetaTrader5` module functions and Mock Broker verifying connection lifecycle, account queries, order placement, return codes, error handling, and position tracking.
 
 ---
 
 ## Non-Functional Requirements
 
 - **NFR1: Modular Architecture**: Strict separation of concerns across Data, Strategies, Consensus, Orders, Backtest, Broker/MT5, and CLI packages.
-- **NFR2: Native macOS Compatibility (Method A)**: Seamless execution from macOS terminal with native Python (3.10+) communicating over local TCP socket to MT5 for Mac without requiring Wine commands or Windows virtualization.
-- **NFR3: Configuration Flexibility**: Full configuration via `config.yaml` with CLI flag overrides (`--host`, `--port`, `--mock`, etc.).
-- **NFR4: Reliability & Network Resilience**: Reconnection backoff, socket timeout handling, no silent crashes, and clear diagnostic error logs.
-- **NFR5: Cross-Platform Support**: Core backtest engine and socket broker client run identically across macOS, Linux, and Windows.
-- **NFR6: Low Latency Execution**: Socket round-trip communication under 5ms on localhost; bar processing and order dispatch under 15ms.
+- **NFR2: Ubuntu Raspberry Pi 5 & Direct Python MT5 Integration**: Direct integration using the `MetaTrader5` Python module with support for execution on Ubuntu on Raspberry Pi 5 (via Wine64/Box64 headless setup), Linux x86_64, and Windows.
+- **NFR3: Configuration Flexibility**: Full configuration via `config.yaml` with CLI flag overrides (`--path`, `--login`, `--server`, `--mock`, etc.).
+- **NFR4: Reliability & Network Resilience**: Reconnection backoff, error handling, no silent crashes, and clear diagnostic error logs.
+- **NFR5: Cross-Platform Support**: Core backtest engine, strategy pipeline, and broker interface run consistently across Ubuntu Linux (Raspberry Pi 5 ARM64 & x86_64), macOS (backtest/mock), and Windows.
+- **NFR6: Low Latency Execution**: Direct Python IPC communication under 5ms; bar processing and order dispatch under 15ms.
 
 ---
 

@@ -60,16 +60,19 @@ auto_tune:
       period: [10, 20]
       std_dev: [1.5, 2.0]
 
-# MetaTrader 5 Live Trading (Method A: Local TCP Socket Bridge for macOS)
+# MetaTrader 5 Live Trading (Direct Python Module)
 mt5:
   enabled: false
   mock: false                         # Set to true for offline simulation without running MT5
-  host: "127.0.0.1"                  # Localhost IP where MT5 ForexBridge.mq5 is running
-  port: 5555                         # Port configured in ForexBridge.mq5 EA
+  path: ""                            # Optional path to terminal64.exe (e.g. for Wine on Ubuntu Pi 5)
+  login: null                         # MT5 account login number (optional if logged in)
+  password: ""                        # MT5 account password
+  server: ""                          # MT5 broker server name
   symbol: "EURUSD"                   # MT5 symbol name in terminal
   lot_size: 0.1                      # Order volume in lots
   magic_number: 100101               # Magic number identifying bot trades
   max_spread_pips: 2.5               # Maximum allowed spread filter (pips)
   deviation_points: 10               # Slippage deviation in points
   poll_interval_seconds: 5           # Polling frequency in seconds
-  timeout_seconds: 5.0               # Socket timeout
+  timeout_seconds: 5.0               # Timeout in seconds
+  timeout_ms: 5000                   # MT5 initialization timeout in milliseconds

@@ -12,7 +12,7 @@ from forex_signals.data.models import Candle, Signal, Timeframe
 
 
 class Broker(Protocol):
-    """Abstract broker interface for live socket and mock trading."""
+    """Abstract broker interface for direct MT5 and mock trading."""
 
     def connect(self) -> bool:
         """Establish connection to the broker terminal or server.

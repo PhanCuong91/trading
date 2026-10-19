@@ -22,7 +22,7 @@ class TestBrokerModels:
     """Test broker dataclasses and enums."""
 
     def test_broker_type_enum(self):
-        assert BrokerType.SOCKET.value == "socket"
+        assert BrokerType.MT5.value == "mt5"
         assert BrokerType.MOCK.value == "mock"
 
     def test_account_info_creation(self):

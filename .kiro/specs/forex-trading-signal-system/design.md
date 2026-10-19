@@ -4,7 +4,7 @@
 
 The Forex Trading Signal System follows a modular pipeline architecture with strict separation between data acquisition, signal generation, consensus decision-making, order management, backtesting/performance analysis, and live MetaTrader 5 broker execution.
 
-### High-Level Architecture (Method A: Local TCP Socket Bridge for macOS)
+### High-Level Architecture (Direct MetaTrader 5 Python Module Integration)
 
 ```plantuml
 @startuml High_Level_Architecture
@@ -20,7 +20,7 @@ package "Configuration Layer" {
 
 package "Data Acquisition Layer" {
     [Yahoo Finance Downloader\n(yfinance / CSV Export)] as YahooDownloader
-    [Socket MT5 Market Feed\n(127.0.0.1:5555)] as SocketDataFeed
+    [MT5 Direct Market Feed\n(mt5.copy_rates_from_pos)] as MT5DataFeed
 }
 
 package "Signal Generation Layer" {
@@ -45,16 +45,15 @@ package "Execution & Evaluation Layer" {
         [Metrics Calculator\n(Sharpe, Win Rate, Drawdown)] as MetricsCalc
     }
     
-    component "Live Execution Pipeline (macOS Method A)" {
-        [Socket Broker Client\n(TCP JSON Client)] as SocketClient
+    component "Live Execution Pipeline (Direct Python MT5)" {
+        [MT5 Direct Broker Client\n(MetaTrader5 Module IPC)] as MT5Client
         [Mock Broker Client\n(Offline Simulator)] as MockClient
         [Live Trading Runner\n(Candle Poller / Event Loop)] as LiveRunner
     }
 }
 
-node "MetaTrader 5 on macOS (Wine/CrossOver)" as MT5Node {
-    [ForexBridge.mq5 Expert Advisor\n(TCP Server on 127.0.0.1:5555)] as ForexBridgeEA
-    [Broker Terminal & Trade Server] as MT5Terminal
+node "MetaTrader 5 Terminal\n(Ubuntu Pi 5 via Box64+Wine64 / Windows / Linux)" as MT5Node {
+    [MetaTrader 5 Client Terminal\n(terminal64.exe)] as MT5Terminal
 }
 
 ' Relationships
@@ -62,10 +61,10 @@ Config --> YahooDownloader : configures
 Config --> StrategyEngine : parameters
 Config --> ConsensusEngine : threshold
 Config --> OrderManager : sl/tp pips
-Config --> SocketClient : host/port
+Config --> MT5Client : login/server/path
 
 YahooDownloader --> StrategyEngine : Historical Candles
-SocketDataFeed --> StrategyEngine : Live Streamed Candles
+MT5DataFeed --> StrategyEngine : Live Streamed Candles
 
 SMI --> ConsensusEngine : Signal (BUY/SELL/NEUT)
 MA --> ConsensusEngine : Signal (BUY/SELL/NEUT)
@@ -80,10 +79,9 @@ BacktestEngine --> MetricsCalc : Trade Log
 AutoTuning --> BacktestEngine : Evaluates Grid Combinations
 
 OrderManager --> LiveRunner : Live Orders
-LiveRunner --> SocketClient : Dispatch Trade
-SocketClient <--> ForexBridgeEA : TCP JSON (Port 5555)
-ForexBridgeEA <--> MT5Terminal : Native MQL5 Trade API
-SocketClient --> MockClient : (Fallback / Offline)
+LiveRunner --> MT5Client : Dispatch Trade
+MT5Client <--> MT5Terminal : Direct Python MT5 API (IPC)
+MT5Client --> MockClient : (Fallback / Offline)
 
 @enduml
 ```
@@ -95,12 +93,9 @@ SocketClient --> MockClient : (Fallback / Offline)
 ```
 trading/
 ├── pyproject.toml
-├── config.yaml                       # Default application & MT5 bridge configuration
+├── config.yaml                       # Default application & MT5 configuration
 ├── requirements.md                   # Requirements specification
-├── README.md                         # Project documentation & macOS MT5 setup guide
-├── scripts/
-│   └── mt5/
-│       └── ForexBridge.mq5           # MQL5 Expert Advisor script for MT5 (Method A)
+├── README.md                         # Project documentation & MT5 setup guide
 ├── src/
 │   └── forex_signals/
 │       ├── __init__.py
@@ -134,9 +129,9 @@ trading/
 │           ├── __init__.py
 │           ├── base.py               # Broker protocol & interface
 │           ├── models.py             # Account, symbol, position, execution models
-│           ├── socket_client.py      # TCP Socket client for macOS MT5 (Method A)
+│           ├── mt5_client.py         # Direct MetaTrader5 Python module client
 │           ├── live_runner.py        # Live trading synchronization & execution loop
-│           └── mock.py               # Mock broker for cross-platform/CI testing
+│           └── mock.py               # Mock broker for offline/CI testing
 └── tests/
     ├── conftest.py
     ├── test_strategies/              # Unit & property tests for strategies
@@ -144,7 +139,7 @@ trading/
     ├── test_orders/                  # Order management & SL/TP calculation tests
     ├── test_backtest/                # Backtesting engine & auto-tuner tests
     ├── test_metrics/                 # Performance metric accuracy tests
-    ├── test_broker/                  # Socket client, mock bridge & live loop tests
+    ├── test_broker/                  # MT5 direct client, mock broker & live loop tests
     ├── test_config/                  # Config parsing & validation tests
     ├── test_data/                    # Downloader & CSV export tests
     └── test_cli/                     # CLI command integration tests
@@ -244,10 +239,10 @@ class BacktestResult:
     num_trades: int
 
 
-# --- MT5 & Live Trading Models (Method A) ---
+# --- MT5 & Live Trading Models ---
 
 class BrokerType(Enum):
-    SOCKET = "socket"
+    MT5 = "mt5"
     MOCK = "mock"
 
 
@@ -308,44 +303,50 @@ class TradeExecutionResult:
 
 ---
 
-## Method A: Local TCP Socket Bridge Design
+## Direct MetaTrader 5 Python Module Integration Design
 
-### Communication Protocol Specification
+### Direct MT5 API Architecture
 
-Native macOS Python acts as a TCP client connecting to `127.0.0.1:<port>` (default `5555`), where the MT5 Expert Advisor (`ForexBridge.mq5`) listens. Messages are framed as newline-delimited JSON objects (`\n`).
+The application communicates directly with MetaTrader 5 using the official `MetaTrader5` Python package (`import MetaTrader5 as mt5`).
+
+On **Ubuntu on Raspberry Pi 5 (ARM64)**, MT5 and Python run inside a lightweight Box64 + Wine64 execution layer (or containerized headless virtual desktop with Xvfb), interacting directly via the MT5 C-extension / IPC channel with `terminal64.exe`.
 
 ```plantuml
-@startuml Socket_Bridge_Protocol
+@startuml MT5_Direct_Module_Protocol
 !theme plain
 skinparam shadowing false
 skinparam roundcorner 6
 autonumber
 
-participant "macOS Python Client\n(SocketBrokerClient)" as PythonClient
-participant "MT5 Expert Advisor\n(ForexBridge.mq5)" as EA
-participant "MT5 Terminal /\nBroker Server" as Broker
+participant "Python Trading Engine\n(MT5BrokerClient)" as PythonClient
+participant "MetaTrader5 Python Module\n(import MetaTrader5 as mt5)" as MT5Module
+participant "MT5 Terminal (terminal64.exe)\n/ Broker Server" as Terminal
 
-== 1. Connection & Heartbeat ==
-PythonClient -> EA: Connect TCP (127.0.0.1:5555)
-PythonClient -> EA: {"action": "PING"}
-EA -> PythonClient: {"status": "OK", "time": "2026-08-19 22:15:00", "server": "MetaQuotes-Demo"}
+== 1. Initialization & Health Check ==
+PythonClient -> MT5Module: mt5.initialize(path, login, password, server, timeout)
+MT5Module -> Terminal: IPC Connect / Login
+Terminal --> MT5Module: Connection OK
+MT5Module --> PythonClient: True
+PythonClient -> MT5Module: mt5.terminal_info()
+MT5Module --> PythonClient: TerminalInfo(connected=True, ...)
 
 == 2. Account & Symbol Synchronization ==
-PythonClient -> EA: {"action": "ACCOUNT_INFO"}
-EA -> Broker: Query Account (Balance, Equity, Margin)
-Broker --> EA: Account Properties
-EA -> PythonClient: {"status": "OK", "balance": 10000.0, "equity": 10000.0, "free_margin": 10000.0}
+PythonClient -> MT5Module: mt5.account_info()
+MT5Module -> Terminal: Query Account Info
+Terminal --> MT5Module: Account Properties
+MT5Module --> PythonClient: AccountInfo(balance=10000.0, equity=10000.0, ...)
 
-PythonClient -> EA: {"action": "SYMBOL_INFO", "symbol": "EURUSD"}
-EA -> Broker: Query Symbol (Point, Digits, Spread, Lot)
-Broker --> EA: Symbol Properties
-EA -> PythonClient: {"status": "OK", "digits": 5, "point": 0.00001, "spread_pips": 1.2, "stop_level": 0}
+PythonClient -> MT5Module: mt5.symbol_info("EURUSD")
+MT5Module -> Terminal: Query Symbol Specs
+Terminal --> MT5Module: Symbol Properties
+MT5Module --> PythonClient: SymbolInfo(digits=5, point=0.00001, spread=12, ...)
+PythonClient -> MT5Module: mt5.symbol_select("EURUSD", True)
 
 == 3. Market Data Ingestion ==
-PythonClient -> EA: {"action": "GET_CANDLES", "symbol": "EURUSD", "timeframe": "M5", "count": 100}
-EA -> Broker: CopyRates(symbol, M5, 0, count)
-Broker --> EA: MqlRates[] array
-EA -> PythonClient: {"status": "OK", "candles": [{"timestamp": 1783680000, "open": 1.0850, ...}, ...]}
+PythonClient -> MT5Module: mt5.copy_rates_from_pos("EURUSD", TIMEFRAME_M5, 0, 100)
+MT5Module -> Terminal: Read Chart Buffer
+Terminal --> MT5Module: numpy.ndarray of MqlRates
+MT5Module --> PythonClient: records [(time, open, high, low, close, tick_vol), ...]
 
 == 4. Order Execution ==
 note over PythonClient
@@ -354,48 +355,29 @@ SL: 20 pips, TP: 40 pips
 Spread Check: 1.2 <= 2.5 pips (PASS)
 end note
 
-PythonClient -> EA: {"action": "ORDER_SEND", "symbol": "EURUSD", "type": "BUY", "volume": 0.1, "sl": 1.0830, "tp": 1.0890, "magic": 100101}
-EA -> Broker: OrderSend(MqlTradeRequest)
-Broker --> EA: MqlTradeResult (retcode 10009)
-EA -> PythonClient: {"status": "OK", "ticket": 7891234, "price": 1.0850, "retcode": 10009}
+PythonClient -> MT5Module: mt5.order_send(request_dict)
+MT5Module -> Terminal: Dispatch MqlTradeRequest
+Terminal --> MT5Module: MqlTradeResult (retcode 10009, order ticket 7891234)
+MT5Module --> PythonClient: OrderSendResult(retcode=10009, order=7891234, price=1.0850)
 
 == 5. Position Tracking & Exit ==
-PythonClient -> EA: {"action": "GET_POSITIONS", "magic": 100101}
-EA -> Broker: PositionsTotal & PositionGetTicket
-Broker --> EA: Active Position Details
-EA -> PythonClient: {"status": "OK", "positions": [{"ticket": 7891234, "profit": 15.0, ...}]}
+PythonClient -> MT5Module: mt5.positions_get(symbol="EURUSD")
+MT5Module -> Terminal: Query Active Deals
+Terminal --> MT5Module: Position tuple
+MT5Module --> PythonClient: (TradePosition(ticket=7891234, magic=100101, profit=15.0),)
 
-PythonClient -> EA: {"action": "ORDER_CLOSE", "ticket": 7891234, "deviation": 10}
-EA -> Broker: OrderSend(Close Deal)
-Broker --> EA: MqlTradeResult (retcode 10009)
-EA -> PythonClient: {"status": "OK", "ticket": 7891234, "retcode": 10009, "comment": "Closed"}
+PythonClient -> MT5Module: mt5.order_send(close_request_dict)
+MT5Module -> Terminal: Dispatch Close Deal
+Terminal --> MT5Module: MqlTradeResult (retcode 10009)
+MT5Module --> PythonClient: OrderSendResult(retcode=10009, comment="Request executed")
+
+== 6. Clean Shutdown ==
+PythonClient -> MT5Module: mt5.shutdown()
+MT5Module -> Terminal: Release IPC resources
+MT5Module --> PythonClient: None
 
 @enduml
 ```
-
-### JSON Protocol Commands & Responses
-
-1. **`PING`**:
-   - Request: `{"action": "PING"}`
-   - Response: `{"status": "OK", "time": "2026-08-19 22:15:00", "server": "MetaQuotes-Demo"}`
-2. **`ACCOUNT_INFO`**:
-   - Request: `{"action": "ACCOUNT_INFO"}`
-   - Response: `{"status": "OK", "login": 123456, "server": "MetaQuotes-Demo", "currency": "USD", "balance": 10000.0, "equity": 10000.0, "free_margin": 10000.0, "margin": 0.0, "leverage": 100}`
-3. **`SYMBOL_INFO`**:
-   - Request: `{"action": "SYMBOL_INFO", "symbol": "EURUSD"}`
-   - Response: `{"status": "OK", "symbol": "EURUSD", "digits": 5, "point": 0.00001, "pip_size": 0.0001, "spread_points": 12, "spread_pips": 1.2, "min_lot": 0.01, "max_lot": 100.0, "lot_step": 0.01, "stop_level": 0}`
-4. **`GET_CANDLES`**:
-   - Request: `{"action": "GET_CANDLES", "symbol": "EURUSD", "timeframe": "M5", "count": 100}`
-   - Response: `{"status": "OK", "candles": [{"timestamp": 1783680000, "open": 1.0850, "high": 1.0860, "low": 1.0845, "close": 1.0855, "volume": 120}, ...]}`
-5. **`ORDER_SEND`**:
-   - Request: `{"action": "ORDER_SEND", "symbol": "EURUSD", "type": "BUY", "volume": 0.1, "sl": 1.0830, "tp": 1.0890, "deviation": 10, "magic": 100101, "comment": "forex_signals_bot"}`
-   - Response: `{"status": "OK", "ticket": 7891234, "price": 1.0850, "retcode": 10009, "comment": "Done"}`
-6. **`ORDER_CLOSE`**:
-   - Request: `{"action": "ORDER_CLOSE", "ticket": 7891234, "deviation": 10}`
-   - Response: `{"status": "OK", "ticket": 7891234, "retcode": 10009, "comment": "Closed"}`
-7. **`GET_POSITIONS`**:
-   - Request: `{"action": "GET_POSITIONS", "magic": 100101}`
-   - Response: `{"status": "OK", "positions": [{"ticket": 7891234, "symbol": "EURUSD", "type": "BUY", "volume": 0.1, "open_price": 1.0850, "sl": 1.0830, "tp": 1.0890, "profit": 15.0, "magic": 100101}]}`
 
 ---
 
@@ -407,30 +389,30 @@ EA -> PythonClient: {"status": "OK", "ticket": 7891234, "retcode": 10009, "comme
 from typing import Protocol, List, Optional
 
 class Broker(Protocol):
-    """Unified broker abstraction supporting live socket and mock execution."""
+    """Unified broker abstraction supporting direct MT5 module and mock execution."""
 
     def connect(self) -> bool:
-        """Initialize connection to broker."""
+        """Initialize connection to broker via mt5.initialize()."""
         ...
 
     def disconnect(self) -> None:
-        """Clean shutdown and release socket/resources."""
+        """Clean shutdown and release resources via mt5.shutdown()."""
         ...
 
     def is_connected(self) -> bool:
-        """Check current connection health via ping."""
+        """Check current connection health via mt5.terminal_info()."""
         ...
 
     def get_account_info(self) -> AccountInfo:
-        """Retrieve real-time account balances and equity."""
+        """Retrieve real-time account balances and equity via mt5.account_info()."""
         ...
 
     def get_symbol_info(self, symbol: str) -> SymbolInfo:
-        """Query symbol specifications (digits, point, spread, lot constraints)."""
+        """Query symbol specifications (digits, point, spread, lot constraints) via mt5.symbol_info()."""
         ...
 
     def get_candles(self, symbol: str, timeframe: Timeframe, count: int) -> List[Candle]:
-        """Fetch latest candles directly from MT5 chart buffer."""
+        """Fetch latest candles via mt5.copy_rates_from_pos()."""
         ...
 
     def place_order(
@@ -444,28 +426,29 @@ class Broker(Protocol):
         magic: int = 100101,
         comment: str = "forex_signals_bot"
     ) -> TradeExecutionResult:
-        """Dispatch market order via socket bridge."""
+        """Dispatch market order via mt5.order_send()."""
         ...
 
     def close_position(self, ticket: int, deviation: int = 10) -> TradeExecutionResult:
-        """Close open position by ticket."""
+        """Close open position by ticket via mt5.order_send()."""
         ...
 
     def get_open_positions(self, magic: Optional[int] = None) -> List[Position]:
-        """List active positions filtered by magic number."""
+        """List active positions filtered by magic number via mt5.positions_get()."""
         ...
 ```
 
-### 2. Socket Broker Client (`SocketBrokerClient`)
+### 2. Direct MT5 Broker Client (`MT5BrokerClient` in `src/forex_signals/broker/mt5_client.py`)
 
-- Implements `Broker` using standard Python `socket` module with TCP keepalive and reconnect backoff (1s, 2s, 4s, up to 30s).
-- Serializes and deserializes newline-delimited JSON commands.
-- Thread-safe socket send/recv with configurable timeout (default: 5.0 seconds).
-- Validates responses and converts JSON dicts into strongly-typed dataclasses (`AccountInfo`, `SymbolInfo`, `Position`, `TradeExecutionResult`).
+- Implements `Broker` interface calling `MetaTrader5` module functions directly.
+- Handles initialization parameter passing (`path`, `login`, `password`, `server`, `timeout`).
+- Maps raw MT5 rate numpy recarrays to internal `List[Candle]`.
+- Assembles `MqlTradeRequest` dictionaries for market orders and position closes.
+- Implements comprehensive error handling with `mt5.last_error()`.
 
-### 3. Mock Broker Client (`MockBrokerClient`)
+### 3. Mock Broker Client (`MockBrokerClient` in `src/forex_signals/broker/mock.py`)
 
-- Pure Python in-memory broker implementation for offline testing, property testing, and CI pipelines without requiring MT5 to be running.
+- Pure Python in-memory broker implementation for offline testing, property testing, and CI pipelines without requiring MT5 or Wine to be running.
 - Simulates account balance, order fills, intrabar tick movements, SL/TP triggers, spread checks, and position tracking.
 
 ### 4. Live Trading Loop (`LiveTradingEngine` in `src/forex_signals/broker/live_runner.py`)
@@ -479,32 +462,32 @@ skinparam shadowing false
 skinparam roundcorner 6
 
 start
-:Initialize SocketBrokerClient (Connect to 127.0.0.1:5555);
+:Initialize MT5BrokerClient (mt5.initialize);
 :Validate MT5 Terminal & Account Info;
 
 while (Bot Running?) is (true)
     :Wait for Next Candle Close / Poll Interval;
-    :Fetch Latest Candles (GET_CANDLES);
+    :Fetch Latest Candles (mt5.copy_rates_from_pos);
     :Execute 5 Strategies (SMI, MA, RSI, MACD, BB);
     :Evaluate Consensus Engine (>= 4/5 agreement);
     
     if (Consensus is BUY or SELL?) then (yes)
-        :Query Open Positions (GET_POSITIONS);
+        :Query Open Positions (mt5.positions_get);
         
         if (Opposite Position Open?) then (yes)
-            :Close Existing Position (ORDER_CLOSE);
+            :Close Existing Position (mt5.order_send);
         endif
         
         if (Same Direction Position Already Open?) then (yes)
             :Hold Existing Position;
         else (no)
-            :Query Live Symbol Specs (SYMBOL_INFO);
+            :Query Live Symbol Specs (mt5.symbol_info);
             if (Live Spread > max_spread_pips?) then (yes)
                 :Log Spread Warning & Skip Order;
             else (no)
                 :Quantize Lot Size to lot_step;
                 :Calculate Valid SL/TP (respecting stop_level);
-                :Send Market Order (ORDER_SEND);
+                :Send Market Order (mt5.order_send);
                 :Log Trade Execution Ticket & Retcode;
             endif
         endif
@@ -513,7 +496,7 @@ while (Bot Running?) is (true)
     endif
 endwhile (false)
 
-:Disconnect Socket & Clean Shutdown;
+:mt5.shutdown() & Clean Exit;
 stop
 
 @enduml
@@ -585,19 +568,21 @@ auto_tune:
       fast_period: [5, 10, 15]
       slow_period: [30, 50, 100]
 
-# MetaTrader 5 Live Trading Configuration (Method A: Local TCP Socket Bridge)
+# MetaTrader 5 Live Trading Configuration (Direct Python Module)
 mt5:
   enabled: false
   mock: false                         # Set true for offline simulation without MT5
-  host: "127.0.0.1"                  # Localhost IP where MT5 ForexBridge EA is running
-  port: 5555                         # Local port configured in MT5 EA
+  path: ""                            # Optional path to terminal64.exe (e.g. in Wine on Ubuntu Pi 5)
+  login: 0                            # MT5 account login number (optional if saved in terminal)
+  password: ""                        # MT5 account password
+  server: ""                          # MT5 broker server name
   symbol: "EURUSD"                   # MT5 symbol name (e.g. EURUSD, EURUSDm)
   lot_size: 0.1                      # Trade volume
   magic_number: 100101               # Magic number identifying bot trades
   max_spread_pips: 2.5               # Maximum allowable spread filter
   deviation_points: 10               # Max allowable slippage in points
   poll_interval_seconds: 5           # Polling interval between candle checks
-  timeout_seconds: 5.0               # Socket request timeout
+  timeout_ms: 5000                   # MT5 initialization timeout in milliseconds
 ```
 
 ---
